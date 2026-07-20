@@ -8,6 +8,10 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/).
 ## [Não publicado]
 
 ### Adicionado
+- Endpoint `POST /images/edit` (multipart): recebe `prompt` + `images[]` e devolve o PNG
+  resultante com `Content-Type: image/png` (200). Erros viram 503 (api-key ausente),
+  400 (imagem de entrada ausente) ou 502 (falha na OpenAI).
+- `ImageEditController` e `ImageEditException` (carrega `HttpStatus` por tipo de erro).
 - Módulo de edição de imagem (`com.marmore.api.image`) com porta do `openai_image` em Python.
 - `ImageEditService.generate()`: chamada ao endpoint `POST /v1/images/edits` via `RestClient`,
   com multipart e `input_fidelity` condicional. Nenhum caminho lança exceção; falhas viram
