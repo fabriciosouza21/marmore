@@ -4,3 +4,11 @@ spring:
   ai:
     openai:
       api-key: ${OPENAI_API_KEY}
+
+marmore:
+  openai:
+    image:
+      base-url: https://api.openai.com
+      api-key: ${OPENAI_API_KEY:}
+      default-model: gpt-image-2
+      timeout: 180s
