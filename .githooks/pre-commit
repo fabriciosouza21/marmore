@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Hook pre-commit: roda checkstyle + spotless antes de permitir o commit.
+# Bypass: SKIP_PRE_COMMIT=1 git commit ...
+
+set -euo pipefail
+
+if [ "${SKIP_PRE_COMMIT:-0}" = "1" ]; then
+  echo "[pre-commit] bypassado por SKIP_PRE_COMMIT=1"
+  exit 0
+fi
+
+# Vai para a raiz do repo (git sempre chama hooks a partir do cwd, mas garantimos)
+cd "$(git rev-parse --show-toplevel)"
+
+if [ ! -f Makefile ]; then
+  echo "[pre-commit] Makefile nao encontrado, pulando verificacoes"
+  exit 0
+fi
+
+echo "[pre-commit] executando make lint (checkstyle + spotless)"
+
+if ! make lint; then
+  cat <<'EOF'
+
+[pre-commit] FALHOU. Corrija as violacoes acima antes de commitar.
+
+  Dicas:
+    - Formatacao:    make format   (corrige automaticamente)
+    - Checkstyle:    ajuste o codigo conforme as regras apontadas
+    - Emergencias:   SKIP_PRE_COMMIT=1 git commit ...
+
+EOF
+  exit 1
+fi
+
+echo "[pre-commit] OK"
