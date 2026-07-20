@@ -42,7 +42,11 @@ public class ImageEditService {
     if (props.getApiKey() == null || props.getApiKey().isBlank()) {
       return new GenerateResult.Err("OPENAI_API_KEY ausente. Defina no ambiente.", ms(start));
     }
-    // demais casos virao em passos seguintes
+    for (Resource img : images) {
+      if (!img.exists()) {
+        return new GenerateResult.Err("imagem de entrada ausente: " + img.getFilename(), ms(start));
+      }
+    }
     throw new UnsupportedOperationException("ainda nao implementado");
   }
 
