@@ -1,6 +1,8 @@
 package com.marmore.api.image.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.marmore.api.image.config.ImageEditProperties;
 import com.marmore.api.image.domain.EditOptions;
@@ -11,8 +13,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.restclient.test.autoconfigure.AutoConfigureMockRestServiceServer;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.client.MockRestServiceServer;
 
@@ -59,6 +63,25 @@ class ImageEditServiceTest {
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).startsWith("imagem de entrada ausente");
+    server.verify();
+  }
+
+  /** Caso #1: resposta com data[0].b64_json devolve Ok com o b64 correto. */
+  @Test
+  void sucessoQuandoRespostaTemB64Json() {
+    Resource imagem = new ClassPathResource("test-images/ambiente.png");
+    String corpo = "{\"data\":[{\"b64_json\":\"aGVsbG8=\"}],\"usage\":{\"total_tokens\":10}}";
+    server
+        .expect(requestTo("https://example.test/v1/images/edits"))
+        .andRespond(withSuccess(corpo, MediaType.APPLICATION_JSON));
+
+    GenerateResult result =
+        service.generate("bancada verde", List.of(imagem), EditOptions.defaults());
+
+    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
+    GenerateResult.Ok ok = (GenerateResult.Ok) result;
+    assertThat(ok.b64()).isEqualTo("aGVsbG8=");
+    assertThat(ok.usage()).isNotNull();
     server.verify();
   }
 }
