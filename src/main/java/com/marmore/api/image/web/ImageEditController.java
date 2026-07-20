@@ -55,11 +55,27 @@ public class ImageEditController {
     GenerateResult resultado =
         service.generate(prompt, List.copyOf(recursos), EditOptions.defaults());
     if (resultado instanceof GenerateResult.Err err) {
-      return ResponseEntity.internalServerError().body(err.error().getBytes());
+      throw new ImageEditException(statusPara(err.error()), err.error());
     }
     GenerateResult.Ok ok = (GenerateResult.Ok) resultado;
     byte[] png = Base64.getDecoder().decode(ok.b64());
     return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(png);
+  }
+
+  /**
+   * Mapeia a mensagem de erro para status HTTP apropriado.
+   *
+   * @param mensagem mensagem vinda do {@link GenerateResult.Err}
+   * @return status HTTP correspondente
+   */
+  private static org.springframework.http.HttpStatus statusPara(String mensagem) {
+    if (mensagem.startsWith("OPENAI_API_KEY")) {
+      return org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+    }
+    if (mensagem.startsWith("imagem de entrada ausente")) {
+      return org.springframework.http.HttpStatus.BAD_REQUEST;
+    }
+    return org.springframework.http.HttpStatus.BAD_GATEWAY;
   }
 
   /** ByteArrayResource com nome de arquivo definido (exige getFilename nao nulo para multipart). */
