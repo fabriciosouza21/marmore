@@ -17,13 +17,15 @@ public class RestClientConfig {
    * Cria o bean RestClient autenticado para a API de imagens.
    *
    * @param props propriedades de configuracao do modulo
+   * @param builder builder de RestClient provido pelo Spring Boot (permite customizacao por testes
+   *     via RestClientCustomizer)
    * @return RestClient configurado
    */
   @Bean
-  public RestClient imageRestClient(ImageEditProperties props) {
+  public RestClient imageRestClient(ImageEditProperties props, RestClient.Builder builder) {
     HttpClientSettings settings = HttpClientSettings.defaults().withReadTimeout(props.getTimeout());
 
-    return RestClient.builder()
+    return builder
         .baseUrl(props.getBaseUrl())
         .defaultHeader("Authorization", "Bearer " + props.getApiKey())
         .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
