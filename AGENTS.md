@@ -7,3 +7,30 @@ Seguir Conventional Commits.
 ## Versionamento
 
 Seguir Semantic Versioning. Tags no formato `X.Y.Z` mantidas em sincronia com `<version>` do `pom.xml`.
+
+## Branches
+
+Seguir GitFlow.
+
+- `main`: produção. Recebe apenas merges de `release/` e `hotfix/`. Tags de release são criadas aqui.
+- `develop`: integração contínua. Todas as features convergem aqui.
+- `feature/<nome>`: nova funcionalidade. Origem e destino: `develop`.
+- `bugfix/<nome>`: correção de bug. Origem e destino: `develop`.
+- `release/<X.Y.Z>`: preparação de versão. Origem: `develop`. Destino: `main` e `develop`.
+- `hotfix/<X.Y.Z>`: correção urgente em produção. Origem: `main`. Destino: `main` e `develop`.
+
+Nomes de branch em kebab-case, sem acentos. Verbo no infinitivo descrevendo a entrega.
+
+### Fluxo resumido
+
+```bash
+# Nova feature
+git checkout develop
+git checkout -b feature/gerar-imagem-pia-americana
+
+# Ao concluir: merge de volta para develop
+git checkout develop
+git merge --no-ff feature/gerar-imagem-pia-americana
+git branch -d feature/gerar-imagem-pia-americana
+```
+
