@@ -3,7 +3,7 @@ spring:
     name: api
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${OPENAI_API_KEY:}
   http:
     client:
       read-timeout: 180s
@@ -12,6 +12,6 @@ marmore:
   openai:
     image:
       base-url: https://api.openai.com
-      api-key: ${OPENAI_API_KEY:}
+      api-key: ${spring.ai.openai.api-key:}
       default-model: gpt-image-2
       timeout: 180s
