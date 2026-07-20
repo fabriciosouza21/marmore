@@ -34,3 +34,12 @@ git merge --no-ff feature/gerar-imagem-pia-americana
 git branch -d feature/gerar-imagem-pia-americana
 ```
 
+## Estilo de codigo
+
+Seguir [Google Java Style](https://google.github.io/styleguide/javaguide.html).
+
+- Checkstyle 11.0.1 com `config/checkstyle/checkstyle.xml` (copia do `google_checks.xml` oficial).
+- Indentacao 2 espacos, sem tabs, line length 100.
+- Spotless com `google-java-format` corrige formatacao automaticamente.
+- Comandos: `make lint` verifica, `make format` corrige.
+
