@@ -1,0 +1,56 @@
+meta {
+  name: Editar Imagem
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/images/edit
+  body: multipartForm
+  auth: none
+}
+
+headers {
+  Accept: image/png
+}
+
+body:multipartForm {
+  prompt: bancada suspensa em granito verde, com cuba embutida e escorredor rebaixado
+  images: file(../assets/ambiente.jpg)
+  images: file(../assets/granito.png)
+}
+
+script:post-response {
+  const status = res.getStatus();
+  if (status === 200) {
+    console.log("Imagem gerada, tamanho (bytes):", res.getBody().length);
+  } else {
+    console.log("Falha. Status:", status, "Body:", res.getBody());
+  }
+}
+
+tests {
+  test("deve retornar 200 OK em sucesso", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("deve retornar content-type image/png", function() {
+    expect(res.getHeader("Content-Type")).to.include("image/png");
+  });
+
+  // Erros esperados por contrato:
+  // 400 = imagem de entrada ausente
+  // 503 = OPENAI_API_KEY ausente no servidor
+  // 502 = falha ao chamar a OpenAI
+  test("nao deve devolver 5xx inesperado", function() {
+    const status = res.getStatus();
+    if (status >= 500 && status !== 502 && status !== 503) {
+      assert.fail("status " + status + " nao esperado");
+    }
+  });
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
