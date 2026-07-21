@@ -114,4 +114,13 @@ class ImageEditControllerTest {
 
     mockMvc.perform(multipart("/images/edit").file(imagemPart)).andExpect(status().isBadGateway());
   }
+
+  /** Imagem indecodificavel: POST /images/edit devolve 400 sem chamar a OpenAI. */
+  @Test
+  void postDeveRetornar400QuandoImagemIndecodificavel() throws Exception {
+    MockMultipartFile imagemPart =
+        new MockMultipartFile("image", "ambiente.png", "image/png", new byte[] {1, 2, 3, 4});
+
+    mockMvc.perform(multipart("/images/edit").file(imagemPart)).andExpect(status().isBadRequest());
+  }
 }
