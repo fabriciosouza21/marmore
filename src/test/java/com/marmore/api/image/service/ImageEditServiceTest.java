@@ -6,18 +6,16 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.marmore.api.image.config.ImageEditProperties;
-import com.marmore.api.image.domain.EditOptions;
 import com.marmore.api.image.domain.GenerateResult;
-import java.time.Duration;
-import java.util.List;
+import java.io.InputStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.restclient.test.autoconfigure.AutoConfigureMockRestServiceServer;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -37,48 +35,65 @@ class ImageEditServiceTest {
   @Autowired ImageEditProperties props;
   @Autowired MockRestServiceServer server;
 
+  /** Caminho da pedra de teste (ambiente.png do classpath), resolvido em runtime. */
+  private static Path pedraValida() {
+    try {
+      return new ClassPathResource("test-images/ambiente.png").getFile().toPath();
+    } catch (java.io.IOException e) {
+      throw new IllegalStateException("ambiente.png ausente do classpath", e);
+    }
+  }
+
   @BeforeEach
-  void resetApiKey() {
+  void resetEstado() {
     props.setApiKey("chave-teste");
+    props.setStonePath(pedraValida());
     server.reset();
   }
 
   /** Caso #2: api-key vazia deve retornar Err sem chamar a API. */
   @Test
-  void erroQuandoApiKeyVaziaSemChamarApi() {
+  void erroQuandoApiKeyVaziaSemChamarApi() throws Exception {
     props.setApiKey("");
 
-    GenerateResult result = service.generate("prompt", List.of(), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).startsWith("OPENAI_API_KEY ausente");
     server.verify();
   }
 
-  /** Caso #3: imagem de entrada inexistente deve retornar Err sem chamar a API. */
+  /** Caso #3: pedra (stone-path) inexistente deve retornar Err sem chamar a API. */
   @Test
-  void erroQuandoImagemInexistenteSemChamarApi() {
-    Resource inexistente = new FileSystemResource("/tmp/arquivo-que-nao-existe.png");
+  void erroQuandoPedraAusenteSemChamarApi() throws Exception {
+    props.setStonePath(Paths.get("/tmp/arquivo-que-nao-existe.png"));
 
-    GenerateResult result =
-        service.generate("prompt", List.of(inexistente), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
-    assertThat(((GenerateResult.Err) result).error()).startsWith("imagem de entrada ausente");
+    assertThat(((GenerateResult.Err) result).error()).startsWith("stone image not found");
     server.verify();
   }
 
-  /** Caso #1: resposta com data[0].b64_json devolve Ok com o b64 correto. */
+  /** Caso #3b: ambiente indecodificavel deve retornar Err sem chamar a API. */
   @Test
-  void sucessoQuandoRespostaTemB64Json() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
+  void erroQuandoImagemIndecodificavelSemChamarApi() {
+    GenerateResult result = service.generate(new byte[] {1, 2, 3, 4});
+
+    assertThat(result).isInstanceOf(GenerateResult.Err.class);
+    assertThat(((GenerateResult.Err) result).error()).startsWith("unable to decode input image");
+    server.verify();
+  }
+
+  /** Caso #1: resposta com data[0].b64_json devolve Ok. */
+  @Test
+  void sucessoQuandoRespostaTemB64Json() throws Exception {
     String corpo = "{\"data\":[{\"b64_json\":\"aGVsbG8=\"}],\"usage\":{\"total_tokens\":10}}";
     server
         .expect(requestTo("https://example.test/v1/images/edits"))
         .andRespond(withSuccess(corpo, MediaType.APPLICATION_JSON));
 
-    GenerateResult result =
-        service.generate("bancada verde", List.of(imagem), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     GenerateResult.Ok ok = (GenerateResult.Ok) result;
@@ -89,13 +104,12 @@ class ImageEditServiceTest {
 
   /** Caso #4: resposta sem data[0] deve devolver Err. */
   @Test
-  void erroQuandoRespostaSemData() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
+  void erroQuandoRespostaSemData() throws Exception {
     server
         .expect(requestTo("https://example.test/v1/images/edits"))
         .andRespond(withSuccess("{\"foo\":1}", MediaType.APPLICATION_JSON));
 
-    GenerateResult result = service.generate("p", List.of(imagem), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).isEqualTo("resposta sem data[0]");
@@ -104,13 +118,12 @@ class ImageEditServiceTest {
 
   /** Caso #5: resposta com data[0] mas sem b64_json deve devolver Err. */
   @Test
-  void erroQuandoRespostaSemB64Json() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
+  void erroQuandoRespostaSemB64Json() throws Exception {
     server
         .expect(requestTo("https://example.test/v1/images/edits"))
         .andRespond(withSuccess("{\"data\":[{}]}", MediaType.APPLICATION_JSON));
 
-    GenerateResult result = service.generate("p", List.of(imagem), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).isEqualTo("resposta sem b64_json");
@@ -119,13 +132,12 @@ class ImageEditServiceTest {
 
   /** Caso #6: erro HTTP deve devolver Err, nao propagar excecao. */
   @Test
-  void erroQuandoServidorRespondeComErroHttp() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
+  void erroQuandoServidorRespondeComErroHttp() throws Exception {
     server
         .expect(requestTo("https://example.test/v1/images/edits"))
         .andRespond(withBadRequest().body("{\"error\":{\"message\":\"bad model\"}}"));
 
-    GenerateResult result = service.generate("p", List.of(imagem), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     server.verify();
@@ -133,49 +145,23 @@ class ImageEditServiceTest {
 
   /** Caso #7: sucesso sem usage devolve Ok com usage nulo. */
   @Test
-  void sucessoQuandoRespostaSemUsage() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
+  void sucessoQuandoRespostaSemUsage() throws Exception {
     server
         .expect(requestTo("https://example.test/v1/images/edits"))
         .andRespond(
             withSuccess("{\"data\":[{\"b64_json\":\"eA==\"}]}", MediaType.APPLICATION_JSON));
 
-    GenerateResult result = service.generate("p", List.of(imagem), EditOptions.defaults());
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     assertThat(((GenerateResult.Ok) result).usage()).isNull();
     server.verify();
   }
 
-  /** Caso #8: modelo suportado com fidelity envia input_fidelity no multipart. */
-  @Test
-  void enviaInputFidelityQuandoModeloSuporta() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
-    EditOptions opts =
-        new EditOptions("gpt-image-1.5", "1024x1024", "medium", "high", Duration.ofSeconds(5));
-    server
-        .expect(requestTo("https://example.test/v1/images/edits"))
-        .andRespond(
-            withSuccess("{\"data\":[{\"b64_json\":\"eA==\"}]}", MediaType.APPLICATION_JSON));
-
-    service.generate("p", List.of(imagem), opts);
-
-    server.verify();
-  }
-
-  /** Caso #9: modelo nao suportado mesmo com fidelity omite input_fidelity. */
-  @Test
-  void omiteInputFidelityQuandoModeloNaoSuporta() {
-    Resource imagem = new ClassPathResource("test-images/ambiente.png");
-    EditOptions opts =
-        new EditOptions("gpt-image-2", "1024x1024", "medium", "high", Duration.ofSeconds(5));
-    server
-        .expect(requestTo("https://example.test/v1/images/edits"))
-        .andRespond(
-            withSuccess("{\"data\":[{\"b64_json\":\"eA==\"}]}", MediaType.APPLICATION_JSON));
-
-    service.generate("p", List.of(imagem), opts);
-
-    server.verify();
+  /** Le a pedra de teste (ambiente.png do classpath) como bytes. */
+  private static byte[] bytesDaPedraDeTeste() throws Exception {
+    try (InputStream in = new ClassPathResource("test-images/ambiente.png").getInputStream()) {
+      return in.readAllBytes();
+    }
   }
 }

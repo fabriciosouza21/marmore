@@ -2,8 +2,10 @@ package com.marmore.api.image.service;
 
 import com.marmore.api.image.config.ImageEditProperties;
 import com.marmore.api.image.domain.EditOptions;
+import com.marmore.api.image.domain.EditPrompts;
 import com.marmore.api.image.domain.GenerateResult;
-import java.util.List;
+import java.util.Optional;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -13,54 +15,59 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Servico de edicao de imagem via endpoint {@code /v1/images/edits} da OpenAI. Nenhum caminho lanca
- * excecao: falhas viram {@link GenerateResult.Err}.
+ * Servico de edicao de imagem via endpoint {@code /v1/images/edits} da OpenAI. Recebe apenas os
+ * bytes da imagem do ambiente; injeta prompt fixo e imagem da pedra. Nenhum caminho lanca excecao:
+ * falhas viram {@link GenerateResult.Err}.
  */
 @Service
 public class ImageEditService {
 
   private final ImageEditProperties props;
   private final RestClient restClient;
+  private final ImageResizer resizer;
 
   /**
    * Construtor.
    *
    * @param props propriedades do modulo
    * @param restClient cliente HTTP autenticado
+   * @param resizer redimensionador de imagem em memoria
    */
-  public ImageEditService(ImageEditProperties props, RestClient restClient) {
+  public ImageEditService(ImageEditProperties props, RestClient restClient, ImageResizer resizer) {
     this.props = props;
     this.restClient = restClient;
+    this.resizer = resizer;
   }
 
   /**
-   * Gera/edita imagem a partir de um prompt e imagens de referencia.
+   * Gera/edita imagem a partir dos bytes do ambiente, injetando prompt fixo e imagem da pedra.
    *
-   * @param prompt prompt de edicao
-   * @param images imagens de entrada (1+)
-   * @param opts opcoes da chamada
+   * @param ambiente bytes da foto do ambiente a ser editada
    * @return sucesso ou erro, nunca lanca
    */
-  public GenerateResult generate(String prompt, List<Resource> images, EditOptions opts) {
+  public GenerateResult generate(byte[] ambiente) {
     long start = System.nanoTime();
     if (props.getApiKey() == null || props.getApiKey().isBlank()) {
       return new GenerateResult.Err("OPENAI_API_KEY ausente. Defina no ambiente.", ms(start));
     }
-    for (Resource img : images) {
-      if (!img.exists()) {
-        return new GenerateResult.Err("imagem de entrada ausente: " + img.getFilename(), ms(start));
-      }
+    Resource pedra = new FileSystemResource(props.getStonePath());
+    if (!pedra.exists()) {
+      return new GenerateResult.Err("stone image not found: " + props.getStonePath(), ms(start));
+    }
+    Optional<byte[]> ambienteReduzido = resizer.resize(ambiente);
+    if (ambienteReduzido.isEmpty()) {
+      return new GenerateResult.Err("unable to decode input image", ms(start));
     }
     try {
+      EditOptions opts = EditOptions.defaults();
       MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
       body.add("model", opts.model());
-      body.add("prompt", prompt);
+      body.add("prompt", EditPrompts.COUNTERTOP);
       body.add("size", opts.size());
       body.add("quality", opts.quality());
       body.add("n", 1);
-      for (Resource img : images) {
-        body.add("image[]", img);
-      }
+      body.add("image[]", new InMemoryResource(ambienteReduzido.get(), "ambiente.jpg"));
+      body.add("image[]", pedra);
       if (opts.sendsFidelity()) {
         body.add("input_fidelity", opts.inputFidelity());
       }
@@ -93,5 +100,21 @@ public class ImageEditService {
 
   private static long ms(long start) {
     return (System.nanoTime() - start) / 1_000_000;
+  }
+
+  /** ByteArrayResource com nome de arquivo, necessario para multipart. */
+  private static final class InMemoryResource
+      extends org.springframework.core.io.ByteArrayResource {
+    private final String filename;
+
+    InMemoryResource(byte[] bytes, String filename) {
+      super(bytes);
+      this.filename = filename;
+    }
+
+    @Override
+    public String getFilename() {
+      return filename;
+    }
   }
 }
