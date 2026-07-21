@@ -15,9 +15,7 @@ headers {
 }
 
 body:multipartForm {
-  prompt: bancada suspensa em granito verde, com cuba embutida e escorredor rebaixado
-  images: file(./assets/ambiente.jpg)
-  images: file(./assets/granito.png)
+  image: @file(./assets/ambiente.jpg)
 }
 
 script:post-response {
