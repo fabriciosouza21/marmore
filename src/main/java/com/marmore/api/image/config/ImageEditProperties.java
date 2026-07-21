@@ -1,5 +1,6 @@
 package com.marmore.api.image.config;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -14,6 +15,7 @@ public class ImageEditProperties {
   private String apiKey;
   private String defaultModel = "gpt-image-2";
   private Duration timeout = Duration.ofSeconds(180);
+  private Path stonePath;
 
   /** Retorna a URL base da API. */
   public String getBaseUrl() {
@@ -49,5 +51,14 @@ public class ImageEditProperties {
 
   public void setTimeout(Duration timeout) {
     this.timeout = timeout;
+  }
+
+  /** Retorna o caminho do arquivo da pedra (granito) enviado como IMAGE 2. */
+  public Path getStonePath() {
+    return stonePath;
+  }
+
+  public void setStonePath(Path stonePath) {
+    this.stonePath = stonePath;
   }
 }
