@@ -7,11 +7,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.marmore.api.image.config.ImageEditProperties;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.restclient.test.autoconfigure.AutoConfigureMockRestServiceServer;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
@@ -34,9 +36,23 @@ class ImageEditControllerTest {
   @Autowired MockRestServiceServer server;
   @Autowired ImageEditProperties props;
 
+  private static final Path PEDRA_VALIDA;
+  private static final byte[] PEDRA_BYTES;
+
+  static {
+    try {
+      PEDRA_VALIDA = new ClassPathResource("test-images/ambiente.png").getFile().toPath();
+      PEDRA_BYTES =
+          new ClassPathResource("test-images/ambiente.png").getInputStream().readAllBytes();
+    } catch (java.io.IOException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
   @org.junit.jupiter.api.BeforeEach
   void resetEstado() {
     props.setApiKey("chave-teste");
+    props.setStonePath(PEDRA_VALIDA);
     server.reset();
   }
 
@@ -50,29 +66,42 @@ class ImageEditControllerTest {
         .andRespond(withSuccess(corpo, MediaType.APPLICATION_JSON));
 
     MockMultipartFile imagemPart =
-        new MockMultipartFile("images", "ambiente.png", "image/png", new byte[] {1, 2, 3});
+        new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
     mockMvc
-        .perform(multipart("/images/edit").file(imagemPart).param("prompt", "bancada verde"))
+        .perform(multipart("/images/edit").file(imagemPart))
         .andExpect(status().isOk())
         .andExpect(content().contentType(MediaType.IMAGE_PNG))
         .andExpect(content().bytes(imagemEsperada));
   }
 
-  /** Api-key ausente: POST /images/edit devolve 503 (servico indisponivel). */
+  /** Api-key ausente: POST /images/edit devolve 503. */
   @Test
   void postDeveRetornar503QuandoApiKeyVazia() throws Exception {
     props.setApiKey("");
 
     MockMultipartFile imagemPart =
-        new MockMultipartFile("images", "ambiente.png", "image/png", new byte[] {1, 2, 3});
+        new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
     mockMvc
-        .perform(multipart("/images/edit").file(imagemPart).param("prompt", "bancada verde"))
+        .perform(multipart("/images/edit").file(imagemPart))
         .andExpect(status().isServiceUnavailable());
   }
 
-  /** Erro HTTP da OpenAI: POST /images/edit devolve 502 (bad gateway). */
+  /** Pedra ausente: POST /images/edit devolve 503. */
+  @Test
+  void postDeveRetornar503QuandoPedraAusente() throws Exception {
+    props.setStonePath(java.nio.file.Paths.get("/tmp/nao-existe.png"));
+
+    MockMultipartFile imagemPart =
+        new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
+
+    mockMvc
+        .perform(multipart("/images/edit").file(imagemPart))
+        .andExpect(status().isServiceUnavailable());
+  }
+
+  /** Erro HTTP da OpenAI: POST /images/edit devolve 502. */
   @Test
   void postDeveRetornar502QuandoServidorOpenAiRespondeErro() throws Exception {
     server
@@ -81,10 +110,8 @@ class ImageEditControllerTest {
             org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest()
                 .body("{\"error\":{\"message\":\"bad model\"}}"));
     MockMultipartFile imagemPart =
-        new MockMultipartFile("images", "ambiente.png", "image/png", new byte[] {1, 2, 3});
+        new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
-    mockMvc
-        .perform(multipart("/images/edit").file(imagemPart).param("prompt", "bancada verde"))
-        .andExpect(status().isBadGateway());
+    mockMvc.perform(multipart("/images/edit").file(imagemPart)).andExpect(status().isBadGateway());
   }
 }

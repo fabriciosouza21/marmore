@@ -1,12 +1,9 @@
 package com.marmore.api.image.web;
 
-import com.marmore.api.image.domain.EditOptions;
 import com.marmore.api.image.domain.GenerateResult;
 import com.marmore.api.image.service.ImageEditService;
 import java.io.IOException;
 import java.util.Base64;
-import java.util.List;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,8 +13,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * Endpoint HTTP para edicao de imagem. Recebe prompt + imagens em multipart, devolve o PNG
- * resultante da chamada ao endpoint {@code /v1/images/edits} da OpenAI.
+ * Endpoint HTTP para edicao de imagem. Recebe apenas a foto do ambiente; o prompt fixo e a imagem
+ * da pedra sao injetados pelo service. Devolve o PNG resultante do {@code /v1/images/edits} da
+ * OpenAI.
  */
 @RestController
 @RequestMapping("/images")
@@ -37,23 +35,14 @@ public class ImageEditController {
   /**
    * POST /images/edit.
    *
-   * @param prompt prompt de edicao
-   * @param images imagens de entrada (1+)
+   * @param image foto do ambiente a ser editada
    * @return PNG gerado (200) ou erro (4xx/5xx)
-   * @throws IOException se falhar a leitura de algum MultipartFile
+   * @throws IOException se falhar a leitura do MultipartFile
    */
   @PostMapping(value = "/edit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-  public ResponseEntity<byte[]> edit(
-      @RequestParam("prompt") String prompt, @RequestParam("images") List<MultipartFile> images)
+  public ResponseEntity<byte[]> edit(@RequestParam("image") MultipartFile image)
       throws IOException {
-    List<ByteArrayResource> recursos = new java.util.ArrayList<>();
-    for (MultipartFile mf : images) {
-      String nome = mf.getOriginalFilename() != null ? mf.getOriginalFilename() : "image";
-      recursos.add(new NamedByteArrayResource(mf.getBytes(), nome));
-    }
-
-    GenerateResult resultado =
-        service.generate(prompt, List.copyOf(recursos), EditOptions.defaults());
+    GenerateResult resultado = service.generate(image.getBytes());
     if (resultado instanceof GenerateResult.Err err) {
       throw new ImageEditException(statusPara(err.error()), err.error());
     }
@@ -72,24 +61,12 @@ public class ImageEditController {
     if (mensagem.startsWith("OPENAI_API_KEY")) {
       return org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
     }
-    if (mensagem.startsWith("imagem de entrada ausente")) {
+    if (mensagem.startsWith("stone image not found")) {
+      return org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+    }
+    if (mensagem.startsWith("unable to decode input image")) {
       return org.springframework.http.HttpStatus.BAD_REQUEST;
     }
     return org.springframework.http.HttpStatus.BAD_GATEWAY;
-  }
-
-  /** ByteArrayResource com nome de arquivo definido (exige getFilename nao nulo para multipart). */
-  private static final class NamedByteArrayResource extends ByteArrayResource {
-    private final String filename;
-
-    NamedByteArrayResource(byte[] bytes, String filename) {
-      super(bytes);
-      this.filename = filename;
-    }
-
-    @Override
-    public String getFilename() {
-      return filename;
-    }
   }
 }
