@@ -1,0 +1,10 @@
+{
+  "name": "marmore-api",
+  "version": "1",
+  "type": "collection",
+  "ignore": [
+    "environments"
+  ],
+  "size": 0,
+  "defaultEnvironment": "Local"
+}
