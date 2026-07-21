@@ -1,0 +1,78 @@
+info:
+  name: editar_imagem
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{baseUrl}}/images/edit"
+  headers:
+    - name: Accept
+      value: image/png
+  body:
+    type: multipart-form
+    data:
+      - name: prompt
+        type: text
+        value: |-
+          bancada suspensa em granito verde, com cuba embutida e escorredor rebaixado
+      - name: images
+        type: file
+        src: ../assets/ambiente.jpg
+      - name: images
+        type: file
+        src: ../assets/granito.png
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        // Sucesso: PNG volta com 200 e content-type correto
+        test("status 200 em sucesso", function() {
+          expect(res.status).to.equal(200);
+        });
+
+        test("content-type image/png", function() {
+          expect(res.getHeader("Content-Type")).to.include("image/png");
+        });
+
+        // Erros esperados por contrato:
+        // 400 = imagem de entrada ausente
+        // 503 = OPENAI_API_KEY ausente no servidor
+        // 502 = falha ao chamar a OpenAI
+        test("nao devolver 5xx inesperado", function() {
+          const status = res.status;
+          if (status >= 500 && status !== 502 && status !== 503) {
+            assert.fail("status " + status + " nao esperado");
+          }
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+docs: |-
+  # POST /images/edit
+
+  Edita imagens a partir de um prompt + imagens de referencia.
+
+  **Entrada:** `multipart/form-data`
+  - `prompt` (texto): instrucao de edicao
+  - `images` (arquivo, 1+): imagens base e de material
+
+  **Saida em sucesso:** `200 OK` com `Content-Type: image/png` e o binario do PNG.
+
+  **Saida em erro:**
+
+  | Status | Quando |
+  | --- | --- |
+  | 400 | imagem de entrada ausente ou invalida |
+  | 503 | api-key da OpenAI nao configurada no servidor |
+  | 502 | falha ao chamar a OpenAI (modelo, timeout, rate limit) |
+
+  A chave da OpenAI e lida de `OPENAI_API_KEY` via Spring AI.
+  Configure no ambiente do Bruno (`baseUrl`) o endereco do servidor:
+  - Local: `http://localhost:8080`
