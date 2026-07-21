@@ -16,12 +16,12 @@ post {
   body: multipartForm
 }
 
-# Caminho completo das imagens de entrada no filesystem local.
-# Substitua pelos arquivos reais do seu teste.
+# Caminho das imagens de entrada, relativo a este arquivo .bru.
+# Os arquivos de exemplo acompanham a collection em ../assets/.
 body:multipartForm {
   prompt: bancada suspensa em granito verde, com cuba embutida e escorredor rebaixado
-  images: file(./assets/ambiente.jpg)
-  images: file(./assets/granito.png)
+  images: file(../assets/ambiente.jpg)
+  images: file(../assets/granito.png)
 }
 
 headers {
