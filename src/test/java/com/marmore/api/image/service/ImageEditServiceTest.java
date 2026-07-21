@@ -6,8 +6,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.marmore.api.image.config.ImageEditProperties;
+import com.marmore.api.image.domain.EditPrompts;
 import com.marmore.api.image.domain.GenerateResult;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +22,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.test.web.client.RequestMatcher;
 
 /** Testes de {@link ImageEditService}. */
 @SpringBootTest
@@ -130,7 +134,10 @@ class ImageEditServiceTest {
     server.verify();
   }
 
-  /** Caso #6: erro HTTP deve devolver Err, nao propagar excecao. */
+  /**
+   * Caso #6: erro HTTP deve devolver Err, nao propagar excecao. O body de erro da OpenAI deve ser
+   * repassado na mensagem (Fix C), junto do status code.
+   */
   @Test
   void erroQuandoServidorRespondeComErroHttp() throws Exception {
     server
@@ -140,6 +147,9 @@ class ImageEditServiceTest {
     GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
+    String error = ((GenerateResult.Err) result).error();
+    assertThat(error).contains("400");
+    assertThat(error).contains("{\"error\":{\"message\":\"bad model\"}}");
     server.verify();
   }
 
@@ -156,6 +166,59 @@ class ImageEditServiceTest {
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     assertThat(((GenerateResult.Ok) result).usage()).isNull();
     server.verify();
+  }
+
+  /**
+   * Caso #8 (contrato multipart): verifica que o body enviado a OpenAI e multipart, com dois campos
+   * {@code image[]} na ordem ambiente.jpg -> pedra (ambiente.png), e que o prompt injetado contem
+   * um trecho fixo de {@link EditPrompts#COUNTERTOP}. Trava a ordem das chamadas {@code
+   * body.add(...)} no service.
+   */
+  @Test
+  // CHECKSTYLE.SUPPRESS: AbbreviationAsWordInName for +1 lines
+  void multipartEnviaDuasPartesImageNaOrdemAmbientePedraEPromptFixo() throws Exception {
+    server
+        .expect(requestTo("https://example.test/v1/images/edits"))
+        .andExpect(verificaMultipartAmbientePedraEPrompt())
+        .andRespond(
+            withSuccess("{\"data\":[{\"b64_json\":\"aGVsbG8=\"}]}", MediaType.APPLICATION_JSON));
+
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
+
+    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
+    server.verify();
+  }
+
+  /**
+   * Matcher customizado: inspeciona o body da {@link
+   * org.springframework.http.client.ClientHttpRequest} como string e verifica o contrato multipart
+   * (duas partes {@code image[]}, ordem ambiente/pedra, e presenca de trecho fixo do prompt).
+   */
+  // CHECKSTYLE.SUPPRESS: AbbreviationAsWordInName for +1 lines
+  private static RequestMatcher verificaMultipartAmbientePedraEPrompt() {
+    return request -> {
+      Object rawBody = request.getBody();
+      assertThat(rawBody).isInstanceOf(ByteArrayOutputStream.class);
+      String body =
+          new String(((ByteArrayOutputStream) rawBody).toByteArray(), StandardCharsets.UTF_8);
+
+      String disposition = "Content-Disposition: form-data; name=\"image[]\"";
+      int primeira = body.indexOf(disposition);
+      int segunda = body.indexOf(disposition, primeira + disposition.length());
+      assertThat(primeira).as("deve existir uma primeira parte image[]").isGreaterThanOrEqualTo(0);
+      assertThat(segunda).as("deve existir uma segunda parte image[]").isGreaterThan(primeira);
+
+      int primeiraFim = body.indexOf("\r\n", primeira);
+      int segundaFim = body.indexOf("\r\n", segunda);
+      String primeiraLinha = body.substring(primeira, primeiraFim);
+      String segundaLinha = body.substring(segunda, segundaFim);
+      assertThat(primeiraLinha).contains("filename=\"ambiente.jpg\"");
+      assertThat(segundaLinha).contains("filename=\"ambiente.png\"");
+
+      assertThat(body)
+          .as("prompt enviado deve conter trecho fixo de EditPrompts.COUNTERTOP")
+          .contains("SUNKEN DRAINBOARD");
+    };
   }
 
   /** Le a pedra de teste (ambiente.png do classpath) como bytes. */

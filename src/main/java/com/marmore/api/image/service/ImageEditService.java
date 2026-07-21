@@ -92,6 +92,14 @@ public class ImageEditService {
       }
       JsonNode usage = raw.has("usage") ? raw.get("usage") : null;
       return new GenerateResult.Ok(b64Node.asText(), raw, usage, latency);
+    } catch (org.springframework.web.client.RestClientResponseException e) {
+      return new GenerateResult.Err(
+          e.getClass().getSimpleName()
+              + " ["
+              + e.getStatusCode()
+              + "]: "
+              + e.getResponseBodyAsString(),
+          ms(start));
     } catch (Exception e) {
       return new GenerateResult.Err(
           e.getClass().getSimpleName() + ": " + e.getMessage(), ms(start));
