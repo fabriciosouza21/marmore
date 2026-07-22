@@ -4,9 +4,6 @@ spring:
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:}
-  http:
-    client:
-      read-timeout: 180s
   servlet:
     multipart:
       max-file-size: 25MB
