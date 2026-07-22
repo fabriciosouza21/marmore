@@ -11,13 +11,23 @@ O endpoint `POST /images/edit` hoje é síncrono: recebe a foto do ambiente
 devolve o PNG resultante. Durante a espera, o cliente fica sem qualquer
 feedback de progresso.
 
-O PlantUML `docs/c4-model/dynamic/sse-user-flow.puml` formaliza um novo fluxo:
-o mesmo endpoint passa a responder via SSE (Server-Sent Events), emitindo
-eventos de status durante o processamento, heartbeat enquanto a OpenAI
-responde, e por fim o resultado com metadados de custo e a imagem em base64.
+O PlantUML `docs/c4-model/dynamic/sse-user-flow.puml` formaliza um fluxo SSE
+(Server-Sent Events): o endpoint passa a responder via SSE, emitindo eventos
+de status durante o processamento, heartbeat enquanto a OpenAI responde, e
+por fim o resultado com metadados de custo e a imagem em base64.
 
-O ponto central é dissociar a chamada bloqueante da OpenAI do envio de
-eventos ao cliente. Isso muda o modelo de execução da aplicação.
+> **Premissa revisada (2026-07-22).** O PlantUML original afirmava que "a
+> OpenAI NÃO faz streaming da geração, a chamada é bloqueante". Isso foi
+> refutado pela [documentação oficial de Image
+> Generation](https://developers.openai.com/api/docs/guides/image-generation):
+> a Images API suporta `stream=true`. Esta spec adota `stream=true` com
+> `partial_images=0`, de forma que a OpenAI emite apenas o evento final
+> `image_generation.completed` (a imagem completa + `usage`), sem previews
+> intermediários. Isso elimina o custo dos parciais (cada parcial custaria
+> 100 tokens de saída) mas mantém o consumo via SSE ponta a ponta.
+
+O ponto central é dissociar o consumo do stream da OpenAI do envio de eventos
+ao cliente, dando feedback de progresso durante a espera (até 180s).
 
 ## Objetivo
 
@@ -25,8 +35,10 @@ Substituir o endpoint síncrono `POST /images/edit` por um fluxo SSE que:
 
 1. Abre canal unidirecional (servidor envia, cliente só escuta).
 2. Emite eventos de status (`recebido`, `redimensionando`, `gerando`).
-3. Envia `ping` a cada 15s enquanto a OpenAI processa (até 180s).
-4. Ao receber a resposta, emite `done` com metadados e `imagem` com o base64.
+3. Consome o stream da OpenAI (`stream=true`, `partial_images=0`) ponta a
+   ponta; envia `ping` a cada 15s enquanto a geração não completa (até 180s).
+4. Ao receber o `image_generation.completed`, emite `done` com metadados e
+   `imagem` com o base64.
 5. Em caso de erro de domínio, emite `error` e fecha o stream.
 
 ## Decisões
@@ -34,11 +46,12 @@ Substituir o endpoint síncrono `POST /images/edit` por um fluxo SSE que:
 | Decisão | Escolha | Razão |
 |---|---|---|
 | Coexistência síncrono vs SSE | SSE **substitui** o síncrono | Reduz surface area. Cliente consome só o stream. |
+| Stream OpenAI | `stream=true` com `partial_images=0` | Consome SSE da OpenAI ponta a ponta, mas sem custo de parciais (cada parcial = 100 tokens). Recebe apenas o `image_generation.completed`. |
 | Custo BRL | Tabela fixa por `model × quality × size` (OpenAI jul/2026) | A `usage` da OpenAI não determina custo (preço é por imagem, não por token). Tabela estática basta. |
 | Câmbio USD→BRL | Ao vivo (AwesomeAPI) com cache em memória + fallback 5.1075 | Valor aproximado do real sem chamada a cada request. |
-| Heartbeat | `event: ping` a cada 15s durante a espera da OpenAI | Mantém conexão viva para proxies/LBs e dá feedback ao cliente. |
+| Heartbeat | `event: ping` a cada 15s entre nossa API e o cliente | Com `partial_images=0`, a OpenAI não emite eventos intermediários até o `completed`. O ping mantém a conexão viva para proxies/LBs e dá feedback ao cliente. |
 | Stack | Full WebFlux reativo (migra `spring-boot-starter-web` → `webflux`) | Modelo reativo ponta a ponta, idiomático para SSE+heartbeat. |
-| Cliente OpenAI | WebClient reativo (migra `RestClient` → `WebClient`) | Alinha o gateway com o stack reativo. |
+| Cliente OpenAI | WebClient reativo (migra `RestClient` → `WebClient`) | Alinha o gateway com o stack reativo. Necessário para consumir o stream SSE da OpenAI ponta a ponta. |
 | Web layer | RouterFunction + HandlerFunction | Estilo funcional WebFlux puro. |
 | Segurança | `SecurityWebFilterChain` integrada (reativa) | Idiomático do Spring Security WebFlux. |
 | Tabela de preços | Hardcoded no `ImageCostCalculator` | Simples. Preços da OpenAI mudam raramente. |
@@ -53,8 +66,8 @@ Canal `text/event-stream` unidirecional. Eventos emitidos em ordem:
 | 1 | `status` | `{"fase":"recebido"}` | imediato após abrir o canal |
 | 2 | `status` | `{"fase":"redimensionando"}` | antes de chamar o `ImageResizer` |
 | 3 | `status` | `{"fase":"gerando"}` | antes de chamar a OpenAI |
-| 4 | `ping` | *(nenhum data)* | a cada 15s enquanto a OpenAI responde |
-| 5 | `done` | `{"latency_ms":N,"custo_brl":N,"usage":{...}}` | ao receber 200 da OpenAI |
+| 4 | `ping` | *(nenhum data)* | a cada 15s enquanto a OpenAI gera (até o `completed`) |
+| 5 | `done` | `{"latency_ms":N,"custo_brl":N,"usage":{...}}` | ao receber o `image_generation.completed` da OpenAI |
 | 6 | `imagem` | `<base64 PNG puro, não JSON>` | logo após o done |
 | — | *(fim do stream)* | — | após imagem |
 
@@ -101,7 +114,11 @@ Pipeline reativo:
    4. emit status {fase: gerando}
    5. merger:
       - Flux.interval(Duration.ofSeconds(15)).map → event: ping
-      - ImageEditService.generate(bytes) → done + imagem (ou error)
+      - ImageEditService.generate(bytes)
+          → abre stream SSE da OpenAI (stream=true, partial_images=0)
+          → aguarda o evento image_generation.completed
+          → extrai b64_json + usage
+        ao completar: done + imagem (ou error)
       merged; ping cancelado ao completar a geracao
    6. close stream
 ```
@@ -114,15 +131,29 @@ O gateway `ImageEditModel.call(prompt)` passa a retornar
 `AiImageOptions`, `InputImage`, `ImageResponse`, `GenerateResult`) seguem
 idênticos, pois são puros dados.
 
+O gateway consome o stream SSE da OpenAI (`POST /v1/images/edits` com
+`stream=true`, `partial_images=0`). A conexão fica aberta até a OpenAI emitir
+o evento `image_generation.completed`, que carrega a imagem final (`b64_json`)
+e o `usage` (`input_tokens`, `output_tokens`). Como `partial_images=0`, nenhum
+evento `image_generation.partial_image` é emitido; a OpenAI fica em silêncio
+até o `completed`.
+
 Composição do `Mono<GenerateResult>` no service:
 
 - Validações síncronas (apiKey, pedra em disco) no início do Mono.
 - `resize` via `Mono.fromCallable(...).subscribeOn(boundedElastic)`.
-- `model.call(prompt)` retorna o `Mono<ImageResponse>` reativo.
+- `model.call(prompt)` abre o stream SSE da OpenAI e retorna o
+  `Mono<ImageResponse>` que completa ao receber o `image_generation.completed`.
 - Latência medida envolvendo o `model.call` com `System.nanoTime()`. O
   `latency_ms` do evento `done` reflete apenas o tempo da chamada à OpenAI
-  (envio do request até recebimento do JSON), não inclui resize ou leitura do
-  upload.
+  (envio do request até recebimento do `image_generation.completed`), não
+  inclui resize ou leitura do upload.
+
+**Parse do stream SSE da OpenAI**: o gateway lê o corpo da resposta como
+`Flux<String>` (linhas SSE), filtra por `event:
+image_generation.completed`, e extrai o `b64_json` e `usage` do JSON do
+`data`. Em caso de erro HTTP da OpenAI (4xx/5xx) durante a abertura ou
+durante o stream, lança `AiImageException`.
 
 ## Cálculo de custo
 
@@ -222,7 +253,7 @@ Mudança de nome: pacote `image` → `imageedit`. Todos os imports
 | `SecurityConfiguration` (Spring Security servlet, `HttpSecurity`) | `SecurityConfiguration` (Spring Security reativo, `ServerHttpSecurity`) |
 | `ImageEditController` (`@RestController`) | `ImageEditRouter` (RouterFunction) + `ImageEditHandler` |
 | `@RequestParam MultipartFile image` | `FilePart` (reativo, lido via `DataBufferUtils`) |
-| `OpenAiRestClientImageEditModel` (`RestClient`) | `OpenAiWebClientImageEditModel` (`WebClient`) |
+| `OpenAiRestClientImageEditModel` (`RestClient`, POST síncrono) | `OpenAiWebClientImageEditModel` (`WebClient`, stream SSE da OpenAI) |
 | `ImageEditModel.call(prompt) → ImageResponse` | `ImageEditModel.call(prompt) → Mono<ImageResponse>` |
 | `ImageEditService.generate(byte[]) → GenerateResult` | `ImageEditService.generate(byte[]) → Mono<GenerateResult>` |
 | `@ControllerAdvice GlobalExceptionHandler` | `WebExceptionHandler` |
@@ -284,7 +315,7 @@ A tabela de preços fica hardcoded no `ImageCostCalculator` (não vai no YAML).
 |---|---|---|
 | `ImageEditRouter` + `ImageEditHandler` | `WebTestClient` + `StepVerifier` sobre `Flux<ServerSentEvent>` | sequência de eventos (recebido → redimensionando → gerando → done → imagem), ping emitido via `withVirtualTime`, `error` em falha de domínio |
 | `ImageEditService` | JUnit + `StepVerifier` sobre `Mono<GenerateResult>` | Ok com b64 válido, Err para key ausente / pedra / decode, latência medida |
-| `OpenAiWebClientImageEditModel` | `MockWebServer` (OkHttp) | multipart correto, parse do `b64_json`, erro HTTP vira `AiImageException` |
+| `OpenAiWebClientImageEditModel` | `MockWebServer` (OkHttp) | multipart correto com `stream=true`/`partial_images=0`, parse do evento SSE `image_generation.completed` (`b64_json` + `usage`), erro HTTP vira `AiImageException` |
 | `ImageCostCalculator` | JUnit puro | lookup por model×quality×size, fallback, `auto` → 1024x1024/medium |
 | `UsdBrlProvider` | JUnit + `MockWebServer` | busca AwesomeAPI, parse `USDBRL.bid`, fallback em timeout/erro, cache TTL não refaz antes de expirar |
 | `ApiKeyAuthWebFilter` / `SecurityConfiguration` | `WebTestClient` | 401 sem header, 401 com key inválida, 200 com key válida, comparação constante |
@@ -305,9 +336,13 @@ A tabela de preços fica hardcoded no `ImageCostCalculator` (não vai no YAML).
 
 ## Fora de escopo
 
-- Streaming real da geração na OpenAI: o PlantUML explicita que a OpenAI não
-  faz streaming da geração. O "progresso" é apenas heartbeat, não evolução
-  real.
+- **Imagens parciais (previews incrementais)**: a OpenAI suporta
+  `partial_images` de 1 a 3, emitindo `image_generation.partial_image` com
+  previews da imagem enquanto gera. Esta spec usa `partial_images=0` (só a
+  imagem final), por decisão do usuário, para evitar o custo extra de cada
+  parcial (100 tokens de saída por parcial). O caminho para habilitar no
+  futuro está mapeado: aumentar `partial_images` no gateway e repassar os
+  eventos `partial_image` como um novo `event: imagem_parcial`.
 - Autenticação por OAuth/JWT: segue apenas `X-API-Key`.
 - Persistência do resultado: o `FileSystemResultWriter` existe mas não é
   usado pelo path HTTP (fica para uso futuro/testes).
@@ -321,12 +356,18 @@ A tabela de preços fica hardcoded no `ImageCostCalculator` (não vai no YAML).
    `SseEmitter` no MVC (alternativa considerada) entregaria o mesmo
    SSE+heartbeat com ruptura mínima. A escolha do WebFlux foi uma decisão
    consciente do usuário após os trade-offs serem apresentados.
-2. **`.env` versionado**: o `.env` com `OPENAI_API_KEY` real continua
+2. **Consumo de stream SSE da OpenAI**: o gateway precisa parsear eventos
+   SSE (`event:`/`data:`) da resposta da OpenAI, não JSON síncrono. O
+   formato exato do evento `image_generation.completed` (campos `b64_json` e
+   `usage` dentro do payload) deve ser confirmado contra a resposta real da
+   OpenAI durante a implementação, pois a documentação pode divergir do
+   comportamento efetivo (há relatos de bugs na comunidade).
+3. **`.env` versionado**: o `.env` com `OPENAI_API_KEY` real continua
    versionado. Não é bloqueante para a implementação, mas é um risco de
    segurança preexistente que vale sanar separadamente.
-3. **Timeout do câmbio**: a AwesomeAPI pode estar indisponível. O fallback
+4. **Timeout do câmbio**: a AwesomeAPI pode estar indisponível. O fallback
    garante que o fluxo não quebra, mas o `custo_brl` pode ficar desatualizado
    por até `cache-ttl` (6h) após a cotação real mudar. Aceitável.
-4. **Preços desatualizados**: a tabela hardcoded reflete jul/2026. Se a
+5. **Preços desatualizados**: a tabela hardcoded reflete jul/2026. Se a
    OpenAI revisar, o `custo_brl` fica incorreto até atualização manual no
    código. Aceitável (revisão trimestral+).
