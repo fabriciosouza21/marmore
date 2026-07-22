@@ -1,0 +1,26 @@
+# Configuracao de teste (substitui o application.yaml de producao nos @SpringBootTest).
+# Como arquivos de resources de teste tem precedencia e NAO fazem merge com os de producao,
+# precisa repetir aqui tudo que o contexto de teste exige.
+
+spring:
+  ai:
+    openai:
+      api-key: ignored
+    # Spring AI 2.0: matchIfMissing=true ativa as autoconfigs se a propriedade esta ausente.
+    # Definir com valor != "openai" desabilita cada autoconfig. Como a integracao da feature
+    # de imagem e via RestClient direto (camada image.ai), nenhum modelo do Spring AI e usado.
+    model:
+      chat: none
+      embedding: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+
+marmore:
+  api:
+    key: chave-teste-fixa
+  openai:
+    image:
+      stone-path: ${user.dir}/data/granito.png

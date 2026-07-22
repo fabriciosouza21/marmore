@@ -4,12 +4,22 @@ spring:
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:}
+    model:
+      chat: none
+      embedding: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
   servlet:
     multipart:
       max-file-size: 25MB
       max-request-size: 25MB
 
 marmore:
+  api:
+    key: ${MARMORE_API_KEY:}
   openai:
     image:
       base-url: https://api.openai.com

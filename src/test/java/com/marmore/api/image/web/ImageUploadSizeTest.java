@@ -2,12 +2,16 @@ package com.marmore.api.image.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.marmore.api.security.ApiKeyAuthFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.util.LinkedMultiValueMap;
@@ -33,7 +37,8 @@ import org.springframework.util.MultiValueMap;
     properties = {
       "marmore.openai.image.base-url=https://example.test",
       "marmore.openai.image.api-key=chave-teste",
-      "marmore.openai.image.timeout=5s"
+      "marmore.openai.image.timeout=5s",
+      "marmore.api.key=chave-teste-fixa"
     })
 class ImageUploadSizeTest {
 
@@ -59,8 +64,12 @@ class ImageUploadSizeTest {
           }
         });
 
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+    headers.set(ApiKeyAuthFilter.HEADER, "chave-teste-fixa");
+
     ResponseEntity<String> resposta =
-        restTemplate.postForEntity("/images/edit", body, String.class);
+        restTemplate.postForEntity("/images/edit", new HttpEntity<>(body, headers), String.class);
 
     assertEquals(413, resposta.getStatusCode().value());
   }

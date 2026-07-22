@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.marmore.api.image.config.ImageEditProperties;
+import com.marmore.api.security.ApiKeyAuthFilter;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,16 +20,18 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 
-/** Testes de {@link ImageEditController}. */
+/** Testes de {@link ImageEditController}. A security real atua: header X-API-Key e exigido. */
 @SpringBootTest
-@AutoConfigureMockMvc(addFilters = false)
+@AutoConfigureMockMvc
 @AutoConfigureMockRestServiceServer
 @TestPropertySource(
     properties = {
       "marmore.openai.image.base-url=https://example.test",
       "marmore.openai.image.api-key=chave-teste",
-      "marmore.openai.image.timeout=5s"
+      "marmore.openai.image.timeout=5s",
+      "marmore.api.key=chave-teste-fixa"
     })
 class ImageEditControllerTest {
 
@@ -56,6 +59,11 @@ class ImageEditControllerTest {
     server.reset();
   }
 
+  /** Monta o multipart com o header X-API-Key (security real ativa). */
+  private MockMultipartHttpServletRequestBuilder reqAutenticado() {
+    return multipart("/images/edit").header(ApiKeyAuthFilter.HEADER, "chave-teste-fixa");
+  }
+
   /** Sucesso: POST /images/edit devolve 200 com Content-Type image/png. */
   @Test
   void postDeveRetornarPngQuandoServidorOpenAiRespondeB64() throws Exception {
@@ -69,7 +77,7 @@ class ImageEditControllerTest {
         new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
     mockMvc
-        .perform(multipart("/images/edit").file(imagemPart))
+        .perform(reqAutenticado().file(imagemPart))
         .andExpect(status().isOk())
         .andExpect(content().contentType(MediaType.IMAGE_PNG))
         .andExpect(content().bytes(imagemEsperada));
@@ -83,9 +91,7 @@ class ImageEditControllerTest {
     MockMultipartFile imagemPart =
         new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
-    mockMvc
-        .perform(multipart("/images/edit").file(imagemPart))
-        .andExpect(status().isServiceUnavailable());
+    mockMvc.perform(reqAutenticado().file(imagemPart)).andExpect(status().isServiceUnavailable());
   }
 
   /** Pedra ausente: POST /images/edit devolve 503. */
@@ -96,9 +102,7 @@ class ImageEditControllerTest {
     MockMultipartFile imagemPart =
         new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
-    mockMvc
-        .perform(multipart("/images/edit").file(imagemPart))
-        .andExpect(status().isServiceUnavailable());
+    mockMvc.perform(reqAutenticado().file(imagemPart)).andExpect(status().isServiceUnavailable());
   }
 
   /** Erro HTTP da OpenAI: POST /images/edit devolve 502. */
@@ -112,7 +116,7 @@ class ImageEditControllerTest {
     MockMultipartFile imagemPart =
         new MockMultipartFile("image", "ambiente.png", "image/png", PEDRA_BYTES);
 
-    mockMvc.perform(multipart("/images/edit").file(imagemPart)).andExpect(status().isBadGateway());
+    mockMvc.perform(reqAutenticado().file(imagemPart)).andExpect(status().isBadGateway());
   }
 
   /** Imagem indecodificavel: POST /images/edit devolve 400 sem chamar a OpenAI. */
@@ -121,6 +125,6 @@ class ImageEditControllerTest {
     MockMultipartFile imagemPart =
         new MockMultipartFile("image", "ambiente.png", "image/png", new byte[] {1, 2, 3, 4});
 
-    mockMvc.perform(multipart("/images/edit").file(imagemPart)).andExpect(status().isBadRequest());
+    mockMvc.perform(reqAutenticado().file(imagemPart)).andExpect(status().isBadRequest());
   }
 }
