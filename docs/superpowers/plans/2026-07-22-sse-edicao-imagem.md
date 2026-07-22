@@ -550,14 +550,17 @@ git commit -m "feat(cost): adiciona UsdBrlProvider com cache TTL e fallback"
 
 ## Task 5: `SseEvents` factory
 
-Factory de `ServerSentEvent<Object>`. Isola o formato dos eventos SSE. Puro, fácil de testar.
+Componente que serializa os payloads dos eventos SSE via `ObjectMapper` (records + Jackson). Nunca monta JSON por concatenação de strings: isso quebra com `BigDecimal` em notação científica, não escapa strings, e reimplementa o que o Jackson já entrega.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/web/SseEvents.java`
 - Test: `src/test/java/com/marmore/api/imageedit/web/SseEventsTest.java`
 
 **Interfaces:**
-- Produces: métodos estáticos `status(String fase)`, `ping()`, `done(long latencyMs, BigDecimal custoBrl, JsonNode usage)`, `imagem(String b64)`, `error(String error, long latencyMs)`. Todos retornam `ServerSentEvent<Object>`.
+- Consumes: `tools.jackson.databind.ObjectMapper` (bean do Spring, injetado no construtor).
+- Produces: métodos de instância `status(String fase)`, `ping()`, `done(long latencyMs, BigDecimal custoBrl, JsonNode usage)`, `imagem(String b64)`, `error(String error, long latencyMs)`. Todos retornam `ServerSentEvent<Object>`.
+
+> **Por que componente e não estática:** o `ObjectMapper` é configurado pelo Spring (Jackson 3) e injetado. Métodos de instância tornam o teste trivial (injeta um mapper novo) e evitam compartilhar estado global. O handler (Task 12) injeta `SseEvents` como dependência.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -574,16 +577,19 @@ import tools.jackson.databind.ObjectMapper;
 
 class SseEventsTest {
 
+  private final SseEvents events = new SseEvents(new ObjectMapper());
+
   @Test
   void statusCarregaFase() {
-    ServerSentEvent<Object> ev = SseEvents.status("recebido");
+    ServerSentEvent<Object> ev = events.status("recebido");
     assertThat(ev.event()).isEqualTo("status");
-    assertThat(ev.data()).isEqualTo("{\"fase\":\"recebido\"}");
+    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
+    assertThat(parsed.path("fase").asText()).isEqualTo("recebido");
   }
 
   @Test
   void pingSemData() {
-    ServerSentEvent<Object> ev = SseEvents.ping();
+    ServerSentEvent<Object> ev = events.ping();
     assertThat(ev.event()).isEqualTo("ping");
     assertThat(ev.data()).isNull();
   }
@@ -592,28 +598,56 @@ class SseEventsTest {
   void doneCarregaLatenciaCustoUsage() {
     ObjectMapper mapper = new ObjectMapper();
     JsonNode usage = mapper.readTreeOrValue("{\"input_tokens\":10}", JsonNode.class);
-    ServerSentEvent<Object> ev = SseEvents.done(1234L, new BigDecimal("0.271"), usage);
+    ServerSentEvent<Object> ev = events.done(1234L, new BigDecimal("0.271"), usage);
     assertThat(ev.event()).isEqualTo("done");
-    assertThat((String) ev.data()).contains("\"latency_ms\":1234");
-    assertThat((String) ev.data()).contains("\"custo_brl\":0.271");
+    JsonNode parsed = mapper.readTree((String) ev.data());
+    assertThat(parsed.path("latency_ms").asLong()).isEqualTo(1234L);
+    assertThat(parsed.path("custo_brl").decimalValue()).isEqualByComparingTo("0.271");
+    assertThat(parsed.path("usage").path("input_tokens").asInt()).isEqualTo(10);
+  }
+
+  @Test
+  void doneComUsageNullSerializaComoNull() {
+    ObjectMapper mapper = new ObjectMapper();
+    ServerSentEvent<Object> ev = events.done(5L, new BigDecimal("0.271"), null);
+    JsonNode parsed = mapper.readTree((String) ev.data());
+    assertThat(parsed.path("usage").isNull()).isTrue();
+  }
+
+  @Test
+  void custoBrlBigDecimalPreservaEscala() {
+    ServerSentEvent<Object> ev = events.done(1L, new BigDecimal("0.053000"), null);
+    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
+    // BigDecimal serializado preserva a escala definida, sem virar notacao cientifica
+    assertThat(parsed.path("custo_brl").asText()).isEqualTo("0.053000");
   }
 
   @Test
   void imagemCarregaBase64Puro() {
-    ServerSentEvent<Object> ev = SseEvents.imagem("aG VsbG8=");
+    ServerSentEvent<Object> ev = events.imagem("aG VsbG8=");
     assertThat(ev.event()).isEqualTo("imagem");
     assertThat(ev.data()).isEqualTo("aG VsbG8=");
   }
 
   @Test
   void errorCarregaMensagemELatencia() {
-    ServerSentEvent<Object> ev = SseEvents.error("OPENAI_API_KEY ausente", 50L);
+    ServerSentEvent<Object> ev = events.error("OPENAI_API_KEY ausente", 50L);
     assertThat(ev.event()).isEqualTo("error");
-    assertThat((String) ev.data()).contains("\"error\":\"OPENAI_API_KEY ausente\"");
-    assertThat((String) ev.data()).contains("\"latency_ms\":50");
+    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
+    assertThat(parsed.path("error").asText()).isEqualTo("OPENAI_API_KEY ausente");
+    assertThat(parsed.path("latency_ms").asLong()).isEqualTo(50L);
+  }
+
+  @Test
+  void errorEscapaAspasNaMensagem() {
+    ServerSentEvent<Object> ev = events.error("mensagem com \"aspas\"", 1L);
+    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
+    assertThat(parsed.path("error").asText()).isEqualTo("mensagem com \"aspas\"");
   }
 }
 ```
+
+> **Notas de teste:** os testes fazem parse reverso do `data` via `readTree` e validam campos. Isso é robusto (não depende de formatação de string exata) e prova que o JSON é válido. O teste `custoBrlBigDecimalPreservaEscala` documenta a razão de usar Jackson: `BigDecimal` com escala é preservado, sem degradar para `5.3E-2`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -627,53 +661,75 @@ package com.marmore.api.imageedit.web;
 
 import java.math.BigDecimal;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
- * Fabrica de eventos SSE para o stream de edicao de imagem. Isola o formato JSON de cada evento
- * (status, ping, done, imagem, error) num unico lugar.
+ * Fabrica de eventos SSE para o stream de edicao de imagem. Serializa os payloads via
+ * {@link ObjectMapper} (records + Jackson), nunca por concatenacao de strings. Isola o formato de
+ * cada evento (status, ping, done, imagem, error) num unico lugar.
  */
+@Component
 public final class SseEvents {
 
-  private SseEvents() {}
+  private final ObjectMapper mapper;
+
+  /**
+   * Construtor.
+   *
+   * @param mapper ObjectMapper do Spring (Jackson 3)
+   */
+  public SseEvents(ObjectMapper mapper) {
+    this.mapper = mapper;
+  }
 
   /** Evento de status com a fase do processamento. */
-  public static ServerSentEvent<Object> status(String fase) {
-    return ServerSentEvent.builder().event("status").data("{\"fase\":\"" + fase + "\"}").build();
+  public ServerSentEvent<Object> status(String fase) {
+    return sse("status", json(new StatusPayload(fase)));
   }
 
   /** Heartbeat. Sem data. */
-  public static ServerSentEvent<Object> ping() {
+  public ServerSentEvent<Object> ping() {
     return ServerSentEvent.builder().event("ping").build();
   }
 
   /** Evento final com metadados. */
-  public static ServerSentEvent<Object> done(long latencyMs, BigDecimal custoBrl, JsonNode usage) {
-    String data =
-        "{\"latency_ms\":"
-            + latencyMs
-            + ",\"custo_brl\":"
-            + custoBrl
-            + ",\"usage\":"
-            + (usage != null ? usage.toString() : "null")
-            + "}";
-    return ServerSentEvent.builder().event("done").data(data).build();
+  public ServerSentEvent<Object> done(long latencyMs, BigDecimal custoBrl, JsonNode usage) {
+    return sse("done", json(new DonePayload(latencyMs, custoBrl, usage)));
   }
 
   /** Imagem final em base64 puro (nao JSON). */
-  public static ServerSentEvent<Object> imagem(String b64) {
-    return ServerSentEvent.builder().event("imagem").data(b64).build();
+  public ServerSentEvent<Object> imagem(String b64) {
+    return sse("imagem", b64);
   }
 
   /** Evento de erro de dominio. */
-  public static ServerSentEvent<Object> error(String error, long latencyMs) {
-    String data = "{\"error\":\"" + escape(error) + "\",\"latency_ms\":" + latencyMs + "}";
-    return ServerSentEvent.builder().event("error").data(data).build();
+  public ServerSentEvent<Object> error(String error, long latencyMs) {
+    return sse("error", json(new ErrorPayload(error, latencyMs)));
   }
 
-  private static String escape(String s) {
-    return s.replace("\\", "\\\\").replace("\"", "\\\"");
+  private static ServerSentEvent<Object> sse(String event, String data) {
+    return ServerSentEvent.builder().event(event).data(data).build();
   }
+
+  private String json(Object payload) {
+    try {
+      return mapper.writeValueAsString(payload);
+    } catch (tools.jackson.core.JacksonException e) {
+      // Records simples nunca falham na serializacao; falha aqui e bug de programacao.
+      throw new IllegalStateException("falha serializando payload SSE: " + e.getMessage(), e);
+    }
+  }
+
+  /** Payload do evento status. */
+  private record StatusPayload(String fase) {}
+
+  /** Payload do evento done. */
+  private record DonePayload(long latency_ms, BigDecimal custo_brl, JsonNode usage) {}
+
+  /** Payload do evento error. */
+  private record ErrorPayload(String error, long latency_ms) {}
 }
 ```
 
@@ -687,7 +743,7 @@ Expected: PASS
 ```bash
 git add src/main/java/com/marmore/api/imageedit/web/SseEvents.java \
         src/test/java/com/marmore/api/imageedit/web/SseEventsTest.java
-git commit -m "feat(sse): adiciona fabrica SseEvents de eventos SSE"
+git commit -m "feat(sse): adiciona fabrica SseEvents com payloads via ObjectMapper"
 ```
 
 ---
@@ -1645,12 +1701,14 @@ import reactor.test.StepVerifier;
 class ImageEditHandlerTest {
 
   private ImageEditService service;
+  private SseEvents events;
   private ImageEditHandler handler;
 
   @BeforeEach
   void setUp() {
     service = mock(ImageEditService.class);
-    handler = new ImageEditHandler(service);
+    events = new SseEvents(new tools.jackson.databind.ObjectMapper());
+    handler = new ImageEditHandler(service, events);
   }
 
   @Test
@@ -1753,14 +1811,17 @@ public class ImageEditHandler {
   private static final long PING_INTERVAL_SECONDS = 15L;
 
   private final ImageEditService service;
+  private final SseEvents events;
 
   /**
    * Construtor.
    *
    * @param service servico de edicao reativo
+   * @param events fabrica de eventos SSE
    */
-  public ImageEditHandler(ImageEditService service) {
+  public ImageEditHandler(ImageEditService service, SseEvents events) {
     this.service = service;
+    this.events = events;
   }
 
   /**
@@ -1803,12 +1864,12 @@ public class ImageEditHandler {
   private Flux<ServerSentEvent<Object>> sequencia(byte[] bytes) {
     Flux<ServerSentEvent<Object>> statusInicial =
         Flux.just(
-            SseEvents.status("recebido"),
-            SseEvents.status("redimensionando"),
-            SseEvents.status("gerando"));
+            events.status("recebido"),
+            events.status("redimensionando"),
+            events.status("gerando"));
     Flux<ServerSentEvent<Object>> heartbeat =
         Flux.interval(java.time.Duration.ofSeconds(PING_INTERVAL_SECONDS))
-            .map(i -> SseEvents.ping());
+            .map(i -> events.ping());
     Flux<ServerSentEvent<Object>> resultado =
         service
             .generate(bytes)
@@ -1820,10 +1881,10 @@ public class ImageEditHandler {
 
   private Flux<ServerSentEvent<Object>> eventosDeResultado(GenerateResult r) {
     if (r instanceof GenerateResult.Ok ok) {
-      return Flux.just(SseEvents.done(ok.latencyMs(), null, ok.usage()), SseEvents.imagem(ok.b64()));
+      return Flux.just(events.done(ok.latencyMs(), null, ok.usage()), events.imagem(ok.b64()));
     }
     GenerateResult.Err err = (GenerateResult.Err) r;
-    return Flux.just(SseEvents.error(err.error(), err.latencyMs()));
+    return Flux.just(events.error(err.error(), err.latencyMs()));
   }
 
   private static java.util.function.Predicate<ServerSentEvent<Object>> isResultado() {
