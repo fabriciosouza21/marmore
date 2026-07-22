@@ -87,7 +87,7 @@ public final class ImageCostCalculator {
                   "1024x1536", new BigDecimal("0.052"),
                   "1536x1024", new BigDecimal("0.052"))));
 
-  /** Construtor sem args; a classe nao tem estado (Item 4, Effective Java). */
+  /** Construtor sem args; a classe nao tem estado. */
   public ImageCostCalculator() {}
 
   /**
@@ -101,8 +101,7 @@ public final class ImageCostCalculator {
   public Optional<BigDecimal> costUsd(String model, String quality, String size) {
     String resolvedQuality = "auto".equals(quality) ? DEFAULT_QUALITY : quality;
     String resolvedSize = "auto".equals(size) ? DEFAULT_SIZE : size;
-    return Optional.ofNullable(PRICE_PER_IMAGE)
-        .map(m -> m.get(model))
+    return Optional.ofNullable(PRICE_PER_IMAGE.get(model))
         .map(m -> m.get(resolvedQuality))
         .map(m -> m.get(resolvedSize));
   }
