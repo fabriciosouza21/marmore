@@ -1,0 +1,24 @@
+meta {
+  name: editar imagem
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/images/edit
+  body: multipartForm
+  auth: inherit
+}
+
+headers {
+  X-API-Key: {{marmore_api_key}}
+}
+
+body:multipart-form {
+  image: @file(assets/ambiente.jpg)
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
