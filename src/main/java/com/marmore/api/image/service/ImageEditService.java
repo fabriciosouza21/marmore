@@ -80,7 +80,7 @@ public class ImageEditService {
       if (b64 == null) {
         return new GenerateResult.Err("resposta sem b64_json", ms(start));
       }
-      return new GenerateResult.Ok(b64, null, resp.metadata().usage(), ms(start));
+      return new GenerateResult.Ok(b64, resp.raw(), resp.metadata().usage(), ms(start));
     } catch (AiImageException e) {
       return new GenerateResult.Err(e.getMessage(), ms(start));
     } catch (Exception e) {

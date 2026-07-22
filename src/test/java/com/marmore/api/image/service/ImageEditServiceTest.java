@@ -11,6 +11,7 @@ import com.marmore.api.image.ai.ImageEditModel;
 import com.marmore.api.image.ai.ImageEditPrompt;
 import com.marmore.api.image.ai.ImageGeneration;
 import com.marmore.api.image.ai.ImageResponse;
+import com.marmore.api.image.ai.ImageResponseMetadata;
 import com.marmore.api.image.config.ImageEditProperties;
 import com.marmore.api.image.domain.EditPrompts;
 import com.marmore.api.image.domain.GenerateResult;
@@ -88,16 +89,28 @@ class ImageEditServiceTest {
     assertThat(((GenerateResult.Err) result).error()).startsWith("unable to decode input image");
   }
 
-  /** Caso #1: gateway devolve b64 -> Ok com b64. */
+  /** Caso #1: gateway devolve b64 com usage -> Ok com b64 e usage propagados. */
   @Test
   void sucessoQuandoGatewayDevolveB64() throws Exception {
-    when(model.call(any()))
-        .thenReturn(ImageResponse.of(List.of(ImageGeneration.of(Image.ofB64("aGVsbG8=")))));
+    when(model.call(any())).thenReturn(respostaComB64("aGVsbG8=", true));
 
     GenerateResult result = service.generate(bytesDaPedraDeTeste());
 
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     assertThat(((GenerateResult.Ok) result).b64()).isEqualTo("aGVsbG8=");
+    assertThat(((GenerateResult.Ok) result).usage()).isNotNull();
+    assertThat(((GenerateResult.Ok) result).raw()).isNotNull();
+  }
+
+  /** Caso #7: gateway devolve b64 sem usage -> Ok com usage nulo. */
+  @Test
+  void sucessoQuandoGatewayDevolveB64SemUsage() throws Exception {
+    when(model.call(any())).thenReturn(respostaComB64("eA==", false));
+
+    GenerateResult result = service.generate(bytesDaPedraDeTeste());
+
+    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
+    assertThat(((GenerateResult.Ok) result).usage()).isNull();
   }
 
   /** Caso #6: gateway lanca AiImageException -> Err com a mensagem. */
@@ -118,8 +131,7 @@ class ImageEditServiceTest {
    */
   @Test
   void promptEnviadoTemDuasImagensNaOrdemAmbientePedraComPromptFixo() throws Exception {
-    when(model.call(any()))
-        .thenReturn(ImageResponse.of(List.of(ImageGeneration.of(Image.ofB64("aA==")))));
+    when(model.call(any())).thenReturn(respostaComB64("aA==", false));
 
     service.generate(bytesDaPedraDeTeste());
 
@@ -138,5 +150,20 @@ class ImageEditServiceTest {
     try (var in = new ClassPathResource("test-images/ambiente.png").getInputStream()) {
       return in.readAllBytes();
     }
+  }
+
+  /**
+   * Constroi uma {@link ImageResponse} de teste com o b64 dado. Quando {@code comUsage}, popula o
+   * usage (e o raw) para validar a propagacao ate {@link GenerateResult.Ok}.
+   */
+  private static ImageResponse respostaComB64(String b64, boolean comUsage) throws Exception {
+    var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+    var raw =
+        comUsage
+            ? mapper.readTree("{\"data\":[{\"b64_json\":\"" + b64 + "\"}],\"usage\":{}}")
+            : mapper.readTree("{\"data\":[{\"b64_json\":\"" + b64 + "\"}]}");
+    var usage = comUsage ? raw.get("usage") : null;
+    return new ImageResponse(
+        List.of(ImageGeneration.of(Image.of(b64))), new ImageResponseMetadata(usage), raw);
   }
 }

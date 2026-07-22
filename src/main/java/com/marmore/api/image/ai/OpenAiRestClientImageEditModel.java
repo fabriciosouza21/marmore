@@ -105,11 +105,11 @@ public class OpenAiRestClientImageEditModel implements ImageEditModel {
       throw new AiImageException("resposta sem b64_json");
     }
     List<ImageGeneration> generations = new ArrayList<>();
-    ImageGeneration primeira = ImageGeneration.of(Image.ofB64(b64Node.asText()));
+    ImageGeneration primeira = ImageGeneration.of(Image.of(b64Node.asText()));
     generations.add(primeira);
     JsonNode usage = raw.has("usage") ? raw.get("usage") : null;
-    ImageResponseMetadata metadata = new ImageResponseMetadata(null, usage);
-    return new ImageResponse(generations, metadata);
+    ImageResponseMetadata metadata = new ImageResponseMetadata(usage);
+    return new ImageResponse(generations, metadata, raw);
   }
 
   /** ByteArrayResource com nome de arquivo, necessario para multipart. */
