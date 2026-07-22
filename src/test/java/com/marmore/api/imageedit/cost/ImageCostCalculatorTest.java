@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -14,7 +15,7 @@ class ImageCostCalculatorTest {
 
   private final ImageCostCalculator calculator = new ImageCostCalculator();
 
-  /** Defaults do produto retornam 0.006 USD (gpt-image-2 + low + 1024x1024). */
+  @DisplayName("defaults do produto retornam 0.006 USD (gpt-image-2 + low + 1024x1024)")
   @Test
   void defaultsDoProdutoRetornaZeroSeis() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-2", "low", "1024x1024");
@@ -22,7 +23,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).hasValue(new BigDecimal("0.006"));
   }
 
-  /** {@code auto} resolve para {@code medium} (quality) e {@code 1024x1024} (size). */
+  @DisplayName("auto em quality e size resolve para medium e 1024x1024")
   @Test
   void autoEmQualitySizeResolvidoParaDefaults() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-2", "auto", "auto");
@@ -30,7 +31,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).hasValue(new BigDecimal("0.053"));
   }
 
-  /** Apenas {@code auto} em quality resolve para {@code medium}. */
+  @DisplayName("apenas auto em quality resolve para medium")
   @Test
   void autoEmQualityResolvidoParaMedium() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-2", "auto", "1024x1024");
@@ -38,7 +39,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).hasValue(new BigDecimal("0.053"));
   }
 
-  /** Apenas {@code auto} em size resolve para {@code 1024x1024}. */
+  @DisplayName("apenas auto em size resolve para 1024x1024")
   @Test
   void autoEmSizeResolvidoPara1024() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-2", "low", "auto");
@@ -46,7 +47,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).hasValue(new BigDecimal("0.006"));
   }
 
-  /** Combinacao conhecida retorna o valor exato da tabela. */
+  @DisplayName("combinação conhecida retorna o valor exato da tabela")
   @Test
   void combinacaoConhecidaRetornaValorDaTabela() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-1.5", "high", "1024x1536");
@@ -54,7 +55,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).hasValue(new BigDecimal("0.200"));
   }
 
-  /** Outra combinacao conhecida (gpt-image-1-mini). */
+  @DisplayName("combinação conhecida do gpt-image-1-mini retorna o valor da tabela")
   @Test
   void combinacaoMiniRetornaValorDaTabela() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-1-mini", "medium", "1536x1024");
@@ -62,7 +63,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).hasValue(new BigDecimal("0.015"));
   }
 
-  /** Modelo desconhecido retorna Optional vazio. */
+  @DisplayName("modelo desconhecido retorna Optional vazio")
   @Test
   void modeloDesconhecidoRetornaVazio() {
     Optional<BigDecimal> cost = calculator.costUsd("dall-e-3", "low", "1024x1024");
@@ -70,7 +71,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).isEmpty();
   }
 
-  /** Quality desconhecida retorna Optional vazio. */
+  @DisplayName("quality desconhecida retorna Optional vazio")
   @Test
   void qualityDesconhecidaRetornaVazio() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-2", "ultra", "1024x1024");
@@ -78,7 +79,7 @@ class ImageCostCalculatorTest {
     assertThat(cost).isEmpty();
   }
 
-  /** Size desconhecido retorna Optional vazio. */
+  @DisplayName("size desconhecido retorna Optional vazio")
   @Test
   void sizeDesconhecidoRetornaVazio() {
     Optional<BigDecimal> cost = calculator.costUsd("gpt-image-2", "low", "768x768");
