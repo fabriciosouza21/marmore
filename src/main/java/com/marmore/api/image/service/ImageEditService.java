@@ -1,42 +1,46 @@
 package com.marmore.api.image.service;
 
+import com.marmore.api.image.ai.AiImageException;
+import com.marmore.api.image.ai.AiImageOptions;
+import com.marmore.api.image.ai.ImageEditModel;
+import com.marmore.api.image.ai.ImageEditPrompt;
+import com.marmore.api.image.ai.ImageResponse;
+import com.marmore.api.image.ai.InputImage;
 import com.marmore.api.image.config.ImageEditProperties;
-import com.marmore.api.image.domain.EditOptions;
 import com.marmore.api.image.domain.EditPrompts;
 import com.marmore.api.image.domain.GenerateResult;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestClient;
-import tools.jackson.databind.JsonNode;
 
 /**
- * Servico de edicao de imagem via endpoint {@code /v1/images/edits} da OpenAI. Recebe apenas os
- * bytes da imagem do ambiente; injeta prompt fixo e imagem da pedra. Nenhum caminho lanca excecao:
- * falhas viram {@link GenerateResult.Err}.
+ * Servico de edicao de imagem. Orquestra as validacoes pre-rede (api-key, pedra em disco, resize do
+ * ambiente), monta o {@link ImageEditPrompt} e delega a chamada ao {@link ImageEditModel}
+ * (gateway). Atua como tradutor entre o contrato do gateway (que lanca {@link AiImageException} em
+ * falha, como o Spring AI) e o contrato interno {@link GenerateResult} (Ok/Err, nunca lanca).
+ * Nenhum caminho lanca excecao: falhas viram {@link GenerateResult.Err}.
  */
 @Service
 public class ImageEditService {
 
   private final ImageEditProperties props;
-  private final RestClient restClient;
   private final ImageResizer resizer;
+  private final ImageEditModel model;
 
   /**
    * Construtor.
    *
    * @param props propriedades do modulo
-   * @param restClient cliente HTTP autenticado
    * @param resizer redimensionador de imagem em memoria
+   * @param model gateway de edicao de imagem (OpenAI ou outro)
    */
-  public ImageEditService(ImageEditProperties props, RestClient restClient, ImageResizer resizer) {
+  public ImageEditService(ImageEditProperties props, ImageResizer resizer, ImageEditModel model) {
     this.props = props;
-    this.restClient = restClient;
     this.resizer = resizer;
+    this.model = model;
   }
 
   /**
@@ -59,70 +63,39 @@ public class ImageEditService {
       return new GenerateResult.Err("unable to decode input image", ms(start));
     }
     try {
-      EditOptions opts = EditOptions.defaults();
-      MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-      body.add("model", opts.model());
-      body.add("prompt", EditPrompts.COUNTERTOP);
-      body.add("size", opts.size());
-      body.add("quality", opts.quality());
-      body.add("n", 1);
-      body.add("image[]", new InMemoryResource(ambienteReduzido.get(), "ambiente.jpg"));
-      body.add("image[]", pedra);
-      if (opts.sendsFidelity()) {
-        body.add("input_fidelity", opts.inputFidelity());
+      Resource pedraFinal = pedra;
+      byte[] pedraBytes = pedraFinal.getContentAsByteArray();
+      ImageEditPrompt prompt =
+          ImageEditPrompt.of(
+              EditPrompts.COUNTERTOP,
+              AiImageOptions.defaults(),
+              List.of(
+                  InputImage.of(ambienteReduzido.get(), "ambiente.jpg"),
+                  InputImage.of(pedraBytes, nomeDoArquivoDaPedra())));
+      ImageResponse resp = model.call(prompt);
+      if (resp.getResult() == null) {
+        return new GenerateResult.Err("resposta sem geracao", ms(start));
       }
-
-      JsonNode raw =
-          restClient
-              .post()
-              .uri("/v1/images/edits")
-              .contentType(MediaType.MULTIPART_FORM_DATA)
-              .body(body)
-              .retrieve()
-              .body(JsonNode.class);
-
-      long latency = ms(start);
-      JsonNode data = raw.path("data");
-      if (!data.isArray() || data.isEmpty()) {
-        return new GenerateResult.Err("resposta sem data[0]", latency);
+      String b64 = resp.getResult().output().b64Json();
+      if (b64 == null) {
+        return new GenerateResult.Err("resposta sem b64_json", ms(start));
       }
-      JsonNode b64Node = data.get(0).path("b64_json");
-      if (b64Node.isMissingNode()) {
-        return new GenerateResult.Err("resposta sem b64_json", latency);
-      }
-      JsonNode usage = raw.has("usage") ? raw.get("usage") : null;
-      return new GenerateResult.Ok(b64Node.asText(), raw, usage, latency);
-    } catch (org.springframework.web.client.RestClientResponseException e) {
-      return new GenerateResult.Err(
-          e.getClass().getSimpleName()
-              + " ["
-              + e.getStatusCode()
-              + "]: "
-              + e.getResponseBodyAsString(),
-          ms(start));
+      return new GenerateResult.Ok(b64, null, resp.metadata().usage(), ms(start));
+    } catch (AiImageException e) {
+      return new GenerateResult.Err(e.getMessage(), ms(start));
     } catch (Exception e) {
       return new GenerateResult.Err(
           e.getClass().getSimpleName() + ": " + e.getMessage(), ms(start));
     }
   }
 
-  private static long ms(long start) {
-    return (System.nanoTime() - start) / 1_000_000;
+  /** Extrai o nome do arquivo da pedra do path configurado. */
+  private String nomeDoArquivoDaPedra() {
+    Path fileName = props.getStonePath().getFileName();
+    return fileName != null ? fileName.toString() : "pedra.png";
   }
 
-  /** ByteArrayResource com nome de arquivo, necessario para multipart. */
-  private static final class InMemoryResource
-      extends org.springframework.core.io.ByteArrayResource {
-    private final String filename;
-
-    InMemoryResource(byte[] bytes, String filename) {
-      super(bytes);
-      this.filename = filename;
-    }
-
-    @Override
-    public String getFilename() {
-      return filename;
-    }
+  private static long ms(long start) {
+    return (System.nanoTime() - start) / 1_000_000;
   }
 }
