@@ -1,7 +1,7 @@
 package com.marmore.api.image.web;
 
-import com.marmore.api.image.domain.GenerateResult;
 import com.marmore.api.image.service.ImageEditService;
+import com.marmore.api.imageedit.domain.GenerateResult;
 import java.io.IOException;
 import java.util.Base64;
 import org.springframework.http.MediaType;

@@ -1,4 +1,4 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 import org.springframework.lang.Nullable;
 import tools.jackson.databind.JsonNode;

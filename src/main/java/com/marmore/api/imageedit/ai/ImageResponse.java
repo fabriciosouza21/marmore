@@ -1,4 +1,4 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 import java.util.List;
 import org.springframework.lang.Nullable;

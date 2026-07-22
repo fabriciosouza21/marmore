@@ -1,4 +1,4 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 /**
  * Falha irrecuperavel na chamada a um modelo de imagem. Unchecked (Item 71, Effective Java): o

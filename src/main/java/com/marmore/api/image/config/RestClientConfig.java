@@ -1,5 +1,6 @@
 package com.marmore.api.image.config;
 
+import com.marmore.api.imageedit.config.ImageEditProperties;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.boot.restclient.RestClientCustomizer;

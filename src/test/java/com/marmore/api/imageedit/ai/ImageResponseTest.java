@@ -1,16 +1,17 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** Testes de {@link ImageResponse} e tipos correlatos da camada ai. */
 class ImageResponseTest {
 
-  /** Construtor canonical copia defensivamente a lista de geracoes. */
   @Test
+  @DisplayName("Construtor canonical copia defensivamente a lista de geracoes")
   void construtorCanonicalCopiaDefensivamente() {
     ImageGeneration gen = ImageGeneration.of(Image.of("aA=="));
     List<ImageGeneration> input = new java.util.ArrayList<>();
@@ -22,8 +23,8 @@ class ImageResponseTest {
     assertThat(resp.results()).hasSize(1);
   }
 
-  /** {@code getResult} retorna a primeira geracao ou nulo se vazia. */
   @Test
+  @DisplayName("getResult retorna a primeira geracao ou nulo se vazia")
   void getResultRetornaPrimeiraOuNulo() {
     ImageGeneration gen = ImageGeneration.of(Image.of("aA=="));
     ImageResponse comGen = new ImageResponse(List.of(gen), ImageResponseMetadata.empty(), null);
@@ -33,8 +34,8 @@ class ImageResponseTest {
     assertThat(vazia.getResult()).isNull();
   }
 
-  /** {@code results} e imutavel. */
   @Test
+  @DisplayName("results e imutavel")
   void resultsEhImutavel() {
     ImageResponse resp =
         new ImageResponse(
@@ -44,8 +45,8 @@ class ImageResponseTest {
         .isInstanceOf(UnsupportedOperationException.class);
   }
 
-  /** {@code raw} e propagado para camadas superiores persistirem o JSON integral. */
   @Test
+  @DisplayName("raw e propagado para camadas superiores persistirem o JSON integral")
   void rawPropagadoParaCamadasSuperiores() {
     tools.jackson.databind.JsonNode node =
         tools.jackson.databind.json.JsonMapper.builder().build().createArrayNode();
@@ -57,8 +58,8 @@ class ImageResponseTest {
     assertThat(resp.raw()).isSameAs(node);
   }
 
-  /** {@link Image} carrega apenas o base64. */
   @Test
+  @DisplayName("Image carrega apenas o base64")
   void imageCarregaB64() {
     Image img = Image.of("aA==");
 

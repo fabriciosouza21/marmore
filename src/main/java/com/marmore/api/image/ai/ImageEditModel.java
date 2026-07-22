@@ -1,5 +1,9 @@
 package com.marmore.api.image.ai;
 
+import com.marmore.api.imageedit.ai.AiImageException;
+import com.marmore.api.imageedit.ai.ImageEditPrompt;
+import com.marmore.api.imageedit.ai.ImageResponse;
+
 /**
  * Contrato de um modelo de edicao de imagem. Espelha {@code
  * org.springframework.ai.image.ImageModel}: interface funcional com um unico metodo {@code call}. A

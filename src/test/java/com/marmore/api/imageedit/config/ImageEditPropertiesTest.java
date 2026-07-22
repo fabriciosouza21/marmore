@@ -1,4 +1,4 @@
-package com.marmore.api.image.config;
+package com.marmore.api.imageedit.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

@@ -1,6 +1,6 @@
 package com.marmore.api;
 
-import com.marmore.api.image.config.ImageEditProperties;
+import com.marmore.api.imageedit.config.ImageEditProperties;
 import com.marmore.api.imageedit.cost.UsdBrlProperties;
 import com.marmore.api.security.ApiKeyProperties;
 import org.springframework.boot.SpringApplication;

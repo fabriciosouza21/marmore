@@ -1,16 +1,17 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** Testes de {@link InputImage} e {@link ImageEditPrompt} (extensao do gap). */
 class ImageEditPromptTest {
 
-  /** {@link InputImage} copia defensivamente os bytes na construcao. */
   @Test
+  @DisplayName("InputImage copia defensivamente os bytes na construcao")
   void inputImageCopiaBytesNaConstrucao() {
     byte[] original = {1, 2, 3};
 
@@ -20,8 +21,8 @@ class ImageEditPromptTest {
     assertThat(img.bytes()).containsExactly(1, 2, 3);
   }
 
-  /** {@link ImageEditPrompt#inputImages()} e imutavel e copia defensivamente a lista de entrada. */
   @Test
+  @DisplayName("ImageEditPrompt.inputImages() e imutavel e copia defensivamente a lista de entrada")
   void promptCopiaDefensivamenteListaDeEntrada() {
     InputImage ambiente = InputImage.of(new byte[] {1}, "ambiente.jpg");
     InputImage pedra = InputImage.of(new byte[] {2}, "granito.png");
@@ -33,8 +34,8 @@ class ImageEditPromptTest {
     assertThat(prompt.inputImages()).containsExactly(ambiente, pedra);
   }
 
-  /** {@link ImageEditPrompt#inputImages()} e imutavel. */
   @Test
+  @DisplayName("ImageEditPrompt.inputImages() e imutavel")
   void promptInputImagesEhImutavel() {
     ImageEditPrompt prompt =
         ImageEditPrompt.of(
@@ -46,8 +47,8 @@ class ImageEditPromptTest {
         .isInstanceOf(UnsupportedOperationException.class);
   }
 
-  /** A ordem das imagens de entrada e preservada (contrato semantico IMAGE 1/IMAGE 2). */
   @Test
+  @DisplayName("A ordem das imagens de entrada e preservada (contrato semantico IMAGE 1/IMAGE 2)")
   void ordemDasImagensDeEntradaPreservada() {
     InputImage primeira = InputImage.of(new byte[] {1}, "ambiente.jpg");
     InputImage segunda = InputImage.of(new byte[] {2}, "granito.png");

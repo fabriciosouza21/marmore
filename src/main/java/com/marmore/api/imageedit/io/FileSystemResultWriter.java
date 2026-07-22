@@ -1,8 +1,8 @@
-package com.marmore.api.image.io;
+package com.marmore.api.imageedit.io;
 
-import com.marmore.api.image.domain.GenerateResult;
-import com.marmore.api.image.domain.GenerateResult.Err;
-import com.marmore.api.image.domain.GenerateResult.Ok;
+import com.marmore.api.imageedit.domain.GenerateResult;
+import com.marmore.api.imageedit.domain.GenerateResult.Err;
+import com.marmore.api.imageedit.domain.GenerateResult.Ok;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

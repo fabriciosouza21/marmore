@@ -1,14 +1,15 @@
 package com.marmore.api.image.service;
 
-import com.marmore.api.image.ai.AiImageException;
-import com.marmore.api.image.ai.AiImageOptions;
 import com.marmore.api.image.ai.ImageEditModel;
-import com.marmore.api.image.ai.ImageEditPrompt;
-import com.marmore.api.image.ai.ImageResponse;
-import com.marmore.api.image.ai.InputImage;
-import com.marmore.api.image.config.ImageEditProperties;
-import com.marmore.api.image.domain.EditPrompts;
-import com.marmore.api.image.domain.GenerateResult;
+import com.marmore.api.imageedit.ai.AiImageException;
+import com.marmore.api.imageedit.ai.AiImageOptions;
+import com.marmore.api.imageedit.ai.ImageEditPrompt;
+import com.marmore.api.imageedit.ai.ImageResponse;
+import com.marmore.api.imageedit.ai.InputImage;
+import com.marmore.api.imageedit.config.ImageEditProperties;
+import com.marmore.api.imageedit.domain.EditPrompts;
+import com.marmore.api.imageedit.domain.GenerateResult;
+import com.marmore.api.imageedit.service.ImageResizer;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;

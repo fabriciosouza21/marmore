@@ -6,7 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.marmore.api.image.config.ImageEditProperties;
+import com.marmore.api.imageedit.config.ImageEditProperties;
 import com.marmore.api.security.ApiKeyAuthFilter;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;

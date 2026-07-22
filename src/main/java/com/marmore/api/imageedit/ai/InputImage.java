@@ -1,4 +1,4 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 /**
  * Imagem binaria de entrada para edicao. Conceito ausente no Spring AI, cuja {@code ImageMessage}

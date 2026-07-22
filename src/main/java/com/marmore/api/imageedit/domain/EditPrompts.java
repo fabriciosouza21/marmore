@@ -1,4 +1,4 @@
-package com.marmore.api.image.domain;
+package com.marmore.api.imageedit.domain;
 
 /** Prompts fixos de edicao. Textos que o produto emprega sem entrada do cliente. */
 public final class EditPrompts {

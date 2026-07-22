@@ -1,9 +1,10 @@
-package com.marmore.api.image.domain;
+package com.marmore.api.imageedit.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
 
@@ -21,12 +22,10 @@ class EditPromptsTest {
     assertThat(prompt).startsWith("I am sending two images.");
   }
 
-  /**
-   * Afirma que {@link EditPrompts#COUNTERTOP} e byte-igual a fonte canonica em {@code
-   * prompts/prompt-countertop.md}. Diferencas de whitespace a direita sao ignoradas (stripTrailing
-   * em ambos os lados) para evitar falso negativo por conta do fechamento do text block.
-   */
   @Test
+  @DisplayName(
+      "Afirma que EditPrompts.COUNTERTOP e byte-igual a fonte canonica em"
+          + " prompts/prompt-countertop.md")
   void countertopIgualaFonteCanonica() throws IOException {
     String canonico;
     try (var in = new ClassPathResource("prompts/prompt-countertop.md").getInputStream()) {

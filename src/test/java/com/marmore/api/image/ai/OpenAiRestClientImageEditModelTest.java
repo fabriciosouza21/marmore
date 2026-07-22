@@ -6,6 +6,11 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.marmore.api.imageedit.ai.AiImageException;
+import com.marmore.api.imageedit.ai.AiImageOptions;
+import com.marmore.api.imageedit.ai.ImageEditPrompt;
+import com.marmore.api.imageedit.ai.ImageResponse;
+import com.marmore.api.imageedit.ai.InputImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;

@@ -1,4 +1,4 @@
-package com.marmore.api.image.service;
+package com.marmore.api.imageedit.service;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;

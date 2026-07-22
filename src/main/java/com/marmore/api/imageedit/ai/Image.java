@@ -1,4 +1,4 @@
-package com.marmore.api.image.ai;
+package com.marmore.api.imageedit.ai;
 
 /**
  * Imagem gerada por um modelo de IA, em base64. Anloga a {@code org.springframework.ai.image.Image}
