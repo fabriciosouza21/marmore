@@ -181,7 +181,12 @@ gpt-image-1-mini:
   high:   {1024x1024: 0.036, 1024x1536: 0.052, 1536x1024: 0.052}
 ```
 
-Defaults atuais (`gpt-image-2`, `medium`, `1024x1024`) → **0.053 USD**.
+Defaults atuais (`gpt-image-2`, `low`, `1024x1024`) → **0.006 USD**.
+
+> **Decisão (2026-07-22):** o `AiImageOptions.defaults()` hoje usa `quality=medium`, mas a rinha
+> usou majoritariamente `low` (14 de 27 chamadas) com qualidade suficiente para o caso de uso e
+> custo 9x menor. O default passa a ser **`low`** (0.006 USD/imagem, ≈R$ 0.03), alinhado ao
+> objetivo de protótipo de baixo custo documentado no Notion.
 
 **`UsdBrlProvider`**: busca USD→BRL na AwesomeAPI
 (`https://economia.awesomeapi.com.br/json/last/USD-BRL`), com cache em

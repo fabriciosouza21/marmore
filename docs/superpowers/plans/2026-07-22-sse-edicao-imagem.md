@@ -10,2708 +10,717 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-22-sse-edicao-imagem-design.md`
 
+## Como ler este plano
+
+Este plano descreve **o problema e a API pública esperada** de cada componente. **Não dita a implementação.** Quem implementa é responsável por:
+
+- Pensar na solução, não copiar código que não está aqui.
+- Aplicar **Effective Java** consistentemente com o codebase existente:
+  - **Item 1 (static factories):** preferir `Foo.of(...)` / `Foo.builder()` a construtores públicos. Os records existentes já seguem isso (`InputImage.of`, `ImageEditPrompt.of`, `AiImageOptions.defaults()`).
+  - **Item 2 (builder):** quando um objeto tem muitos parâmetros opcionais, usar o pattern builder (especialmente payloads SSE, opções de imagem).
+  - **Item 17 (imutabilidade):** records com cópia defensiva de arrays e listas no construtor canonical (`InputImage`, `ImageResponse` já fazem). Arrays de bytes nunca expostos sem cópia na entrada.
+  - **Item 15 (minimize acessibilidade):** campos `private final`, métodos auxiliares `private`, expor só o necessário.
+  - **Design de API pública:** pensar no que o consumidor do componente vê. Nome de métodos revela intenção. Assinaturas não vazam detalhes de implementação.
+- Seguir Google Java Style (2 espaços, sem tabs, 100 cols). `make format` corrige; `make lint` verifica.
+- **TDD:** todo código novo segue RED → GREEN. Escreva o teste que descreve o comportamento esperado primeiro, depois a implementação mínima.
+- **Jackson 3:** sempre `tools.jackson.databind.*`, nunca `com.fasterxml`. Serialização JSON sempre via `ObjectMapper`, nunca por concatenação de strings.
+- **Reativo:** I/O no event loop. Operações bloqueantes (`resize`, leitura de pedra em disco) em `Schedulers.boundedElastic()`.
+
+## Padrões de referência no codebase
+
+Antes de implementar qualquer componente novo, leia estes arquivos para calibrar o estilo:
+
+- `image/ai/InputImage.java` — record imutável com cópia defensiva de array (Item 17) + static factory `of` (Item 1).
+- `image/ai/ImageResponse.java` — record com cópia defensiva de lista + accessor `getResult()`.
+- `image/ai/AiImageOptions.java` — record com static factory `defaults()` (Item 1) + método derivado `sendsFidelity()`.
+- `image/domain/GenerateResult.java` — sealed interface com `Ok`/`Err` (type-safe, sem exceção).
+
+Estes são a barra de qualidade. Componentes novos devem estar nesse nível.
+
+## Contexto de produto (do Notion)
+
+- **Objetivo do produto:** renderizar bancada de pia suspensa em granito sobre foto de ambiente real. O endpoint recebe a foto do ambiente; prompt fixo e imagem da pedra são injetados pelo backend.
+- **Modelo escolhido na rinha:** `gpt-image-2` (flagship, mais barato em `low`: 0.006 USD/imagem, ~32s latência, qualidade suficiente).
+- **Pipeline adotado:** `gpt-image-2` em `low` para iteração; `medium`/`high` para final. Neste plano o default passa a ser **`low`** (decisão do usuário, alinhado ao uso majoritário da rinha).
+- **`input_fidelity=high`** foi testado e **descartado** (sem diferencial visual, dobra custo). Não enviar.
+- **Tabela de preços** (OpenAI jul/2026, USD por imagem): ver spec. Defaults (`gpt-image-2`, `low`, `1024x1024`) = **0.006 USD**.
+
 ## Global Constraints
 
-- **Indentação:** 2 espaços, sem tabs, line length 100 (Google Java Style). Spotless com google-java-format 1.30.0 corrige automaticamente (`make format`). Checkstyle 11.0.1 com `config/checkstyle/checkstyle.xml`.
-- **Commits:** Conventional Commits. Stagear arquivos explicitamente com `git add <file>`. Um commit por tarefa (ou sub-step conforme indicado).
-- **Jackson:** o projeto usa Jackson 3 (`tools.jackson.databind.JsonNode`, não `com.fasterxml`). Sempre importar de `tools.jackson.*`.
-- **Tests:** todo código novo segue TDD (RED → GREEN → REVERT → GREEN). Build via `make` (alvos: `make test`, `make lint`, `make format`). Pre-commit hook roda checkstyle + spotless automaticamente.
-- **No placeholders:** todo step tem código completo. Nenhum "TODO", "implementar depois".
-- **Idioma:** Javadocs e mensagens em português, nome de classes em inglês (conforme padrão do codebase).
-- **Reativo:** todo I/O no event loop. Operações bloqueantes (`resize`, leitura de pedra em disco) envolvidas em `Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())`.
+- **Indentação:** 2 espaços, sem tabs, line length 100. Spotless + Checkstyle no pre-commit.
+- **Commits:** Conventional Commits. Stagear explicitamente. Um commit por tarefa.
+- **Jackson:** `tools.jackson.*` sempre.
+- **Modelo/quality default:** `gpt-image-2`, `low`, `1024x1024`. Atualizar `AiImageOptions.defaults()` (hoje `medium`) para `low`.
+- **Não há spec para esta seção do produto além do PlantUML e do Notion.** Em caso de dúvida de produto, pergunte antes de assumir.
 
 ---
 
-## File Structure
+## Task 1: Record de domínio `ImageCost`
 
-Arquivos agrupados por responsabilidade. As tarefas seguem a ordem de dependência (bottom-up): primeiro domínio puro e componentes isolados, depois gateway, service, web, security, e por fim a migração de stack e remoção do MVC.
+**Problema:** Precisamos representar o custo de uma geração (USD, BRL, usage) como um valor imutável que trafega entre a camada de custo e o evento SSE.
 
-### Novos (feature `imageedit`)
-
-| Arquivo | Responsabilidade |
-|---|---|
-| `imageedit/domain/ImageCost.java` | record puro: custo USD, custo BRL, usage. |
-| `imageedit/cost/ImageCostCalculator.java` | tabela hardcoded `PRICE_PER_IMAGE` + lookup. |
-| `imageedit/cost/UsdBrlProperties.java` | `@ConfigurationProperties(prefix="marmore.cost.usd-brl")`: url, cache-ttl, fallback. |
-| `imageedit/cost/UsdBrlProvider.java` | busca câmbio na AwesomeAPI com cache + fallback. |
-| `imageedit/web/SseEvents.java` | factory de `ServerSentEvent<Object>` (status, ping, done, imagem, error). |
-| `imageedit/web/ImageEditRouter.java` | `RouterFunction` POST `/images/edit`. |
-| `imageedit/web/ImageEditHandler.java` | handler reativo que monta o `Flux<ServerSentEvent>`. |
-| `imageedit/config/WebClientConfig.java` | bean `WebClient` com base-url + Bearer + timeouts. |
-| `imageedit/ai/OpenAiWebClientImageEditModel.java` | gateway WebClient consumindo SSE da OpenAI. |
-
-### Migrados (mesma lógica, nova assinatura/pacote)
-
-| Arquivo | Mudança |
-|---|---|
-| `imageedit/ai/ImageEditModel.java` | `call(prompt) → Mono<ImageResponse>` (era síncrono). |
-| `imageedit/service/ImageEditService.java` | `generate(byte[]) → Mono<GenerateResult>` (era síncrono). |
-| `imageedit/web/ImageEditException.java` | agora `extends RuntimeException` (era `ResponseStatusException`). |
-| `security/SecurityConfiguration.java` | reescrito para `ServerHttpSecurity` / `SecurityWebFilterChain`. |
-| `security/ApiKeyAuthWebFilter.java` | substitui `ApiKeyAuthFilter`; novo `WebFilter` reativo. |
-| `web/GlobalWebExceptionHandler.java` | substitui `GlobalExceptionHandler`; vira `WebExceptionHandler`. |
-
-### Movidos (só pacote `image` → `imageedit`, sem mudança de lógica)
-
-`image/ai/{ImageEditPrompt, AiImageOptions, InputImage, ImageResponse, ImageResponseMetadata, ImageGeneration, Image, AiImageException}.java`, `image/service/ImageResizer.java`, `image/domain/{GenerateResult, EditPrompts}.java`, `image/io/{ImageResultWriter, FileSystemResultWriter}.java`, `image/config/ImageEditProperties.java`.
-
-### Removidos
-
-`image/web/ImageEditController.java`, `image/ai/OpenAiRestClientImageEditModel.java`, `image/config/RestClientConfig.java`, `security/ApiKeyAuthFilter.java`, `web/GlobalExceptionHandler.java`.
-
-### Modificados
-
-`pom.xml` (remove webmvc/restclient + test starters), `ApiApplication.java` (package registry), `application.yaml` (adiciona `marmore.cost`).
-
----
-
-## Task 1: Domain record `ImageCost`
-
-Cria o record puro de custo. Sem dependências. Base para o calculator.
+**Responsabilidade:** carregar três valores. Nenhuma lógica.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/domain/ImageCost.java`
 - Test: `src/test/java/com/marmore/api/imageedit/domain/ImageCostTest.java`
 
-**Interfaces:**
-- Produces: `record ImageCost(BigDecimal costUsd, BigDecimal costBrl, JsonNode usage)`
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.domain;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.math.BigDecimal;
-import org.junit.jupiter.api.Test;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
-class ImageCostTest {
-
-  @Test
-  void mantemValoresPassados() {
-    ObjectMapper mapper = new ObjectMapper();
-    JsonNode usage = mapper.readTreeOrValue("{\"input_tokens\":10,\"output_tokens\":20}", JsonNode.class);
-    ImageCost cost = new ImageCost(new BigDecimal("0.053"), new BigDecimal("0.271"), usage);
-    assertThat(cost.costUsd()).isEqualByComparingTo("0.053");
-    assertThat(cost.costBrl()).isEqualByComparingTo("0.271");
-    assertThat(cost.usage().path("output_tokens").asInt()).isEqualTo(20);
-  }
-}
+```
+ImageCost(BigDecimal costUsd, BigDecimal costBrl, JsonNode usage)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Record imutável. `BigDecimal` para valores monetários (precisão). `JsonNode` para o usage cru da OpenAI (pode ser null).
 
-Run: `make test`
-Expected: FAIL — `ImageCost` não existe (erro de compilação).
+**Critérios de aceite (testes):**
+- Mantém os valores passados.
+- Aceita `usage` null sem estourar.
 
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.domain;
-
-import java.math.BigDecimal;
-import tools.jackson.databind.JsonNode;
-
-/**
- * Custo de uma geracao de imagem. Valores monetarios em {@link BigDecimal} para precisao. O
- * {@code usage} e o JSON cru retornado pela OpenAI (tokens de entrada/saida).
- *
- * @param costUsd custo em dolares (tabela oficial OpenAI)
- * @param costBrl custo em reais (costUsd x cambio do dia)
- * @param usage uso de tokens reportado pela OpenAI
- */
-public record ImageCost(BigDecimal costUsd, BigDecimal costBrl, JsonNode usage) {}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/domain/ImageCost.java \
-        src/test/java/com/marmore/api/imageedit/domain/ImageCostTest.java
-git commit -m "feat(cost): adiciona record ImageCost para custo de geracao"
-```
+- [ ] **Step 1:** Escreva o teste de comportamento (mantém valores; aceita usage null).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL (classe não existe).
+- [ ] **Step 3:** Implemente o record seguindo o padrão de `InputImage`/`ImageResponse` (Effective Java Item 17).
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(cost): adiciona record ImageCost para custo de geracao`
 
 ---
 
 ## Task 2: `ImageCostCalculator`
 
-Tabela hardcoded de preços OpenAI (jul/2026). Lookup por `model × quality × size`. Puro, sem I/O.
+**Problema:** Calcular o custo em USD de uma geração a partir do modelo, qualidade e tamanho. A OpenAI cobra por imagem (não por token), então o custo depende apenas desses três parâmetros.
+
+**Responsabilidade:** lookup numa tabela fixa de preços. Sem I/O.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/cost/ImageCostCalculator.java`
 - Test: `src/test/java/com/marmore/api/imageedit/cost/ImageCostCalculatorTest.java`
 
-**Interfaces:**
-- Consumes: `AiImageOptions` (model, quality, size) — ainda em `com.marmore.api.image.ai`. **Atenção:** se `AiImageOptions` ainda estiver no pacote `image` (não migrado), importar de `com.marmore.api.image.ai.AiImageOptions`. A migração de pacote (Task 14) ajustará o import depois.
-- Produces: `Optional<BigDecimal> costUsd(String model, String quality, String size)`
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.cost;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.math.BigDecimal;
-import org.junit.jupiter.api.Test;
-
-class ImageCostCalculatorTest {
-
-  private final ImageCostCalculator calc = new ImageCostCalculator();
-
-  @Test
-  void defaultsAtuaisGptImage2Medium1024() {
-    assertThat(calc.costUsd("gpt-image-2", "medium", "1024x1024"))
-        .hasValue(new BigDecimal("0.053"));
-  }
-
-  @Test
-  void autoEResolvidoPara1024x1024Medium() {
-    assertThat(calc.costUsd("gpt-image-2", "auto", "auto"))
-        .hasValue(new BigDecimal("0.053"));
-  }
-
-  @Test
-  void highGptImage1_5Portrait() {
-    assertThat(calc.costUsd("gpt-image-1.5", "high", "1024x1536"))
-        .hasValue(new BigDecimal("0.200"));
-  }
-
-  @Test
-  void modeloDesconhecidoViraEmpty() {
-    assertThat(calc.costUsd("modelo-inexistente", "medium", "1024x1024")).isEmpty();
-  }
-
-  @Test
-  void qualityDesconhecidaViraEmpty() {
-    assertThat(calc.costUsd("gpt-image-2", "ultra", "1024x1024")).isEmpty();
-  }
-}
+```
+ImageCostCalculator()                                  // sem estado, construido direto
+Optional<BigDecimal> costUsd(String model, String quality, String size)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Retorna `Optional` vazio se a combinação não existir na tabela.
 
-Run: `make test`
-Expected: FAIL — `ImageCostCalculator` não existe.
+**Regras de domínio:**
+- Tabela hardcoded (mesma fonte da rinha, preços oficiais OpenAI jul/2026). Ver spec para a tabela completa.
+- `"auto"` (quality) resolve para `"medium"`. `"auto"` (size) resolve para `"1024x1024"`. Estes são os defaults da OpenAI quando o parâmetro não é explícito.
+- Defaults do produto: `gpt-image-2` + `low` + `1024x1024` = **0.006 USD**.
 
-- [ ] **Step 3: Write minimal implementation**
+**Critérios de aceite (testes):**
+- Defaults do produto retornam 0.006.
+- `auto`/`auto` resolve para os defaults (0.006 com low, ou o que a tabela disser para medium).
+- Combinação conhecida retorna o valor correto (ex.: `gpt-image-1.5` + `high` + `1024x1536` = 0.200).
+- Modelo desconhecido → `Optional.empty()`.
+- Quality desconhecida → `Optional.empty()`.
 
-```java
-package com.marmore.api.imageedit.cost;
+**Notas de design:**
+- Classe sem estado (`final`, construtor sem args). Pode ser instanciada direto ou como bean.
+- Tabela como estrutura imutável (`Map.of` aninhado ou `Map.copyOf`).
 
-import java.math.BigDecimal;
-import java.util.Map;
-import java.util.Optional;
-
-/**
- * Calcula o custo em USD de uma geracao de imagem pela tabela oficial de precos da OpenAI
- * (jul/2026). Indexa modelo x quality x size. "auto" e resolvido para "1024x1024" e "medium"
- * (defaults da OpenAI). Retorna {@link Optional#empty()} se a combinacao nao existir na tabela.
- */
-public final class ImageCostCalculator {
-
-  private static final String SQUARE = "1024x1024";
-
-  private static final Map<String, Map<String, Map<String, BigDecimal>>> PRICE_PER_IMAGE =
-      Map.of(
-          "gpt-image-2",
-              Map.of(
-                  "low", Map.of("1024x1024", bd("0.006"), "1024x1536", bd("0.005"), "1536x1024", bd("0.005")),
-                  "medium", Map.of("1024x1024", bd("0.053"), "1024x1536", bd("0.041"), "1536x1024", bd("0.041")),
-                  "high", Map.of("1024x1024", bd("0.211"), "1024x1536", bd("0.165"), "1536x1024", bd("0.165"))),
-          "gpt-image-1.5",
-              Map.of(
-                  "low", Map.of("1024x1024", bd("0.009"), "1024x1536", bd("0.013"), "1536x1024", bd("0.013")),
-                  "medium", Map.of("1024x1024", bd("0.034"), "1024x1536", bd("0.050"), "1536x1024", bd("0.050")),
-                  "high", Map.of("1024x1024", bd("0.133"), "1024x1536", bd("0.200"), "1536x1024", bd("0.200"))),
-          "gpt-image-1-mini",
-              Map.of(
-                  "low", Map.of("1024x1024", bd("0.005"), "1024x1536", bd("0.006"), "1536x1024", bd("0.006")),
-                  "medium", Map.of("1024x1024", bd("0.011"), "1024x1536", bd("0.015"), "1536x1024", bd("0.015")),
-                  "high", Map.of("1024x1024", bd("0.036"), "1024x1536", bd("0.052"), "1536x1024", bd("0.052"))));
-
-  /**
-   * Custo em USD por imagem.
-   *
-   * @param model nome do modelo (ex: "gpt-image-2")
-   * @param quality qualidade ("low", "medium", "high", "auto")
-   * @param size tamanho ("1024x1024", "1024x1536", "1536x1024", "auto")
-   * @return custo em USD, ou empty se a combinacao nao existir
-   */
-  public Optional<BigDecimal> costUsd(String model, String quality, String size) {
-    String resolvedSize = "auto".equals(size) ? SQUARE : size;
-    String resolvedQuality = "auto".equals(quality) ? "medium" : quality;
-    return Optional.ofNullable(PRICE_PER_IMAGE)
-        .map(m -> m.get(model))
-        .map(m -> m.get(resolvedQuality))
-        .map(m -> m.get(resolvedSize));
-  }
-
-  private static BigDecimal bd(String v) {
-    return new BigDecimal(v);
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/cost/ImageCostCalculator.java \
-        src/test/java/com/marmore/api/imageedit/cost/ImageCostCalculatorTest.java
-git commit -m "feat(cost): adiciona ImageCostCalculator com tabela OpenAI jul/2026"
-```
+- [ ] **Step 1:** Escreva os testes de comportamento (lookup, auto-resolution, empty cases).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente. Aplique Effective Java (imutabilidade da tabela, accessor limpo).
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(cost): ImageCostCalculator com tabela OpenAI jul/2026`
 
 ---
 
 ## Task 3: `UsdBrlProperties`
 
-Properties do câmbio. Sem lógica. Base para o `UsdBrlProvider`.
+**Problema:** Configurar URL da API de câmbio, TTL do cache e fallback via `application.yaml`.
+
+**Responsabilidade:** carregar config. Sem lógica.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/cost/UsdBrlProperties.java`
 - Test: `src/test/java/com/marmore/api/imageedit/cost/UsdBrlPropertiesTest.java`
 
-**Interfaces:**
-- Produces: `@ConfigurationProperties(prefix="marmore.cost.usd-brl")` com `url`, `cacheTtl`, `fallback`. Registrado em `ApiApplication` na Task 15.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.cost;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.time.Duration;
-import org.junit.jupiter.api.Test;
-
-class UsdBrlPropertiesTest {
-
-  @Test
-  void temDefaults() {
-    UsdBrlProperties props = new UsdBrlProperties();
-    assertThat(props.getUrl())
-        .isEqualTo("https://economia.awesomeapi.com.br/json/last/USD-BRL");
-    assertThat(props.getCacheTtl()).isEqualTo(Duration.ofHours(6));
-    assertThat(props.getFallback()).isEqualByComparingTo("5.1075");
-  }
-}
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `make test`
-Expected: FAIL — `UsdBrlProperties` não existe.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.cost;
-
-import java.math.BigDecimal;
-import java.time.Duration;
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
-/**
- * Propriedades do provedor de cambio USD->BRL.
- *
- * @param url endpoint da API de cambio (AwesomeAPI)
- * @param cacheTtl tempo de vida do cache em memoria
- * @param fallback cotacao usada se a API falhar (Investing 17/07/2026)
- */
 @ConfigurationProperties(prefix = "marmore.cost.usd-brl")
-public record UsdBrlProperties(
-    String url, Duration cacheTtl, BigDecimal fallback) {
-
-  /** Construtor com defaults. */
-  public UsdBrlProperties() {
-    this(
-        "https://economia.awesomeapi.com.br/json/last/USD-BRL",
-        Duration.ofHours(6),
-        new BigDecimal("5.1075"));
-  }
-}
+record UsdBrlProperties(String url, Duration cacheTtl, BigDecimal fallback)
+// + construtor compacto com defaults:
+//   url = "https://economia.awesomeapi.com.br/json/last/USD-BRL"
+//   cacheTtl = Duration.ofHours(6)
+//   fallback = new BigDecimal("5.1075")  // Investing 17/07/2026
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+**Critérios de aceite (testes):**
+- Construtor sem args entrega os três defaults.
 
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/cost/UsdBrlProperties.java \
-        src/test/java/com/marmore/api/imageedit/cost/UsdBrlPropertiesTest.java
-git commit -m "feat(cost): adiciona UsdBrlProperties com defaults"
-```
+- [ ] **Step 1:** Escreva o teste (defaults presentes).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente o record com `@ConfigurationProperties` e construtor de defaults.
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(cost): UsdBrlProperties com defaults`
 
 ---
 
 ## Task 4: `UsdBrlProvider`
 
-Busca câmbio na AwesomeAPI com cache em memória (TTL) + fallback. Usa `WebClient`. Esta é a primeira classe reativa do plano.
+**Problema:** Buscar a cotação USD→BRL na AwesomeAPI, com cache em memória por TTL para não refazer a chamada a cada request, e fallback hardcoded se a API falhar.
 
-**Pré-requisito:** `WebClient` bean existe. Para tornar esta tarefa independente, o teste injeta um `WebClient.Builder` customizado apontando para `MockWebServer`.
+**Responsabilidade:** prover `Mono<BigDecimal> currentRate()` que ou retorna o valor em cache (se válido) ou busca na API.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/cost/UsdBrlProvider.java`
 - Test: `src/test/java/com/marmore/api/imageedit/cost/UsdBrlProviderTest.java`
 
-**Interfaces:**
-- Consumes: `WebClient.Builder` (construído no teste com baseUrl do MockWebServer), `UsdBrlProperties`.
-- Produces: `Mono<BigDecimal> currentRate()`
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.cost;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.math.BigDecimal;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
-
-class UsdBrlProviderTest {
-
-  private static MockWebServer server;
-  private static UsdBrlProvider provider;
-
-  @BeforeAll
-  static void setUp() throws Exception {
-    server = new MockWebServer();
-    server.start();
-    UsdBrlProperties props =
-        new UsdBrlProperties(server.url("/").toString(), java.time.Duration.ofHours(6), new BigDecimal("5.1075"));
-    provider = new UsdBrlProvider(WebClient.builder(), props);
-  }
-
-  @AfterAll
-  static void tearDown() throws Exception {
-    server.shutdown();
-  }
-
-  @Test
-  void parseiaBidDaAwesomeApi() {
-    server.enqueue(
-        new MockResponse()
-            .setHeader("Content-Type", "application/json")
-            .setBody("{\"USDBRL\":{\"bid\":\"5.42\"}}"));
-    StepVerifier.create(provider.currentRate())
-        .assertNext(rate -> assertThat(rate).isEqualByComparingTo("5.42"))
-        .verifyComplete();
-  }
-
-  @Test
-  void usaFallbackEmErroHttp() {
-    server.enqueue(new MockResponse().setResponseCode(500));
-    StepVerifier.create(provider.currentRate())
-        .assertNext(rate -> assertThat(rate).isEqualByComparingTo("5.1075"))
-        .verifyComplete();
-  }
-
-  @Test
-  void cacheaNaoRefazAntesDoTtl() {
-    server.enqueue(
-        new MockResponse()
-            .setHeader("Content-Type", "application/json")
-            .setBody("{\"USDBRL\":{\"bid\":\"5.99\"}}"));
-    // primeira chamada popula o cache
-    BigDecimal first = provider.currentRate().block();
-    assertThat(first).isEqualByComparingTo("5.99");
-    // segunda chamada deve usar o cache (nao enfileira nova resposta no server)
-    BigDecimal second = provider.currentRate().block();
-    assertThat(second).isEqualByComparingTo("5.99");
-  }
-}
+```
+UsdBrlProvider(WebClient.Builder builder, UsdBrlProperties props)
+Mono<BigDecimal> currentRate()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+**Regras de domínio:**
+- Cache em memória: se a última busca foi há menos de `cacheTtl`, retorna o valor cacheado sem chamar a API.
+- Em erro (HTTP 4xx/5xx, timeout, JSON inválido), usa `fallback`.
+- Parse do campo `USDBRL.bid` do JSON da AwesomeAPI.
 
-Run: `make test`
-Expected: FAIL — `UsdBrlProvider` não existe, e `okhttp3.mockwebserver` pode estar ausente do `pom.xml`.
+**Critérios de aceite (testes):**
+- Parseia o `bid` da resposta JSON da AwesomeAPI.
+- Usa fallback em erro HTTP (500).
+- Usa fallback em timeout.
+- Não refaz a chamada antes do TTL expirar (segunda chamada dentro do TTL retorna o valor cacheado).
+- Após o TTL expirar, refaz a chamada.
 
-Se `MockWebServer` não compilar, adicione a dependência de teste primeiro:
+**Notas de design:**
+- `WebClient.Builder` injetado (não `WebClient` pronto) para que o teste aponte para um `MockWebServer`.
+- Cache thread-safe (a API é reativa, múltiplas threads do event loop podem chamar `currentRate` concorrentemente).
+- Componente Spring (`@Component`).
 
-```xml
-<dependency>
-  <groupId>com.squareup.okhttp3</groupId>
-  <artifactId>mockwebserver</artifactId>
-  <version>4.12.0</version>
-  <scope>test</scope>
-</dependency>
-```
+**Dependência de teste:** `com.squareup.okhttp3:mockwebserver:4.12.0` (test scope). Adicione ao `pom.xml` se ainda não estiver.
 
-em `pom.xml` dentro de `<dependencies>` (antes de `<dependencyManagement>`). Commit separado:
-
-```bash
-git add pom.xml
-git commit -m "chore(test): adiciona mockwebserver para testar WebClient"
-```
-
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.cost;
-
-import java.math.BigDecimal;
-import java.time.Instant;
-import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
-import tools.jackson.databind.JsonNode;
-
-/**
- * Provedor de cambio USD->BRL. Busca cotacao na AwesomeAPI com cache em memoria por TTL
- * configuravel. Em caso de erro (HTTP, timeout, JSON invalido), usa o fallback configurado.
- */
-@Component
-public class UsdBrlProvider {
-
-  private final WebClient client;
-  private final UsdBrlProperties props;
-  private volatile CachedRate cache;
-
-  /**
-   * Construtor.
-   *
-   * @param builder builder de WebClient (sem baseUrl; a URL completa vem das properties)
-   * @param props propriedades de cambio
-   */
-  public UsdBrlProvider(WebClient.Builder builder, UsdBrlProperties props) {
-    this.client = builder.build();
-    this.props = props;
-  }
-
-  /**
-   * Cotacao atual. Usa cache se valido; senao busca na API.
-   *
-   * @return cambio USD->BRL
-   */
-  public Mono<BigDecimal> currentRate() {
-    CachedRate atual = cache;
-    if (atual != null && !atual.isExpired(props)) {
-      return Mono.just(atual.rate);
-    }
-    return fetch().doOnNext(rate -> cache = new CachedRate(rate, Instant.now()));
-  }
-
-  private Mono<BigDecimal> fetch() {
-    return client
-        .get()
-        .uri(props.url())
-        .retrieve()
-        .bodyToMono(JsonNode.class)
-        .map(node -> new BigDecimal(node.path("USDBRL").path("bid").asText()))
-        .onErrorResume(e -> Mono.just(props.fallback()));
-  }
-
-  private record CachedRate(BigDecimal rate, Instant fetchedAt) {
-    boolean isExpired(UsdBrlProperties props) {
-      return Instant.now().isAfter(fetchedAt.plus(props.cacheTtl()));
-    }
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/cost/UsdBrlProvider.java \
-        src/test/java/com/marmore/api/imageedit/cost/UsdBrlProviderTest.java
-git commit -m "feat(cost): adiciona UsdBrlProvider com cache TTL e fallback"
-```
+- [ ] **Step 1:** Se necessário, adicione `mockwebserver` ao `pom.xml` e commite separado (`chore(test): adiciona mockwebserver`).
+- [ ] **Step 2:** Escreva os testes de comportamento (parse, fallback HTTP, fallback timeout, cache TTL).
+- [ ] **Step 3:** Rode `make test`, confirme FAIL.
+- [ ] **Step 4:** Implemente. Pense na concorrência do cache (volatile + verificação dupla, ou `AtomicReference`).
+- [ ] **Step 5:** Rode `make test`, confirme PASS.
+- [ ] **Step 6:** Commit: `feat(cost): UsdBrlProvider com cache TTL e fallback`
 
 ---
 
-## Task 5: `SseEvents` factory
+## Task 5: `SseEvents` (serialização via ObjectMapper)
 
-Componente que serializa os payloads dos eventos SSE via `ObjectMapper` (records + Jackson). Nunca monta JSON por concatenação de strings: isso quebra com `BigDecimal` em notação científica, não escapa strings, e reimplementa o que o Jackson já entrega.
+**Problema:** Construir os payloads JSON dos eventos SSE de forma segura. Nunca por concatenação de strings: isso quebra com `BigDecimal` em notação científica e não escapa strings.
+
+**Responsabilidade:** dado um valor de domínio (fase, metadados de done, erro), produzir um `ServerSentEvent<Object>` com o `data` serializado via Jackson.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/web/SseEvents.java`
 - Test: `src/test/java/com/marmore/api/imageedit/web/SseEventsTest.java`
 
-**Interfaces:**
-- Consumes: `tools.jackson.databind.ObjectMapper` (bean do Spring, injetado no construtor).
-- Produces: métodos de instância `status(String fase)`, `ping()`, `done(long latencyMs, BigDecimal custoBrl, JsonNode usage)`, `imagem(String b64)`, `error(String error, long latencyMs)`. Todos retornam `ServerSentEvent<Object>`.
+**API pública esperada:**
 
-> **Por que componente e não estática:** o `ObjectMapper` é configurado pelo Spring (Jackson 3) e injetado. Métodos de instância tornam o teste trivial (injeta um mapper novo) e evitam compartilhar estado global. O handler (Task 12) injeta `SseEvents` como dependência.
+```
+SseEvents(ObjectMapper mapper)                         // ObjectMapper injetado (Jackson 3)
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.web;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.math.BigDecimal;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.codec.ServerSentEvent;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
-class SseEventsTest {
-
-  private final SseEvents events = new SseEvents(new ObjectMapper());
-
-  @Test
-  void statusCarregaFase() {
-    ServerSentEvent<Object> ev = events.status("recebido");
-    assertThat(ev.event()).isEqualTo("status");
-    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
-    assertThat(parsed.path("fase").asText()).isEqualTo("recebido");
-  }
-
-  @Test
-  void pingSemData() {
-    ServerSentEvent<Object> ev = events.ping();
-    assertThat(ev.event()).isEqualTo("ping");
-    assertThat(ev.data()).isNull();
-  }
-
-  @Test
-  void doneCarregaLatenciaCustoUsage() {
-    ObjectMapper mapper = new ObjectMapper();
-    JsonNode usage = mapper.readTreeOrValue("{\"input_tokens\":10}", JsonNode.class);
-    ServerSentEvent<Object> ev = events.done(1234L, new BigDecimal("0.271"), usage);
-    assertThat(ev.event()).isEqualTo("done");
-    JsonNode parsed = mapper.readTree((String) ev.data());
-    assertThat(parsed.path("latency_ms").asLong()).isEqualTo(1234L);
-    assertThat(parsed.path("custo_brl").decimalValue()).isEqualByComparingTo("0.271");
-    assertThat(parsed.path("usage").path("input_tokens").asInt()).isEqualTo(10);
-  }
-
-  @Test
-  void doneComUsageNullSerializaComoNull() {
-    ObjectMapper mapper = new ObjectMapper();
-    ServerSentEvent<Object> ev = events.done(5L, new BigDecimal("0.271"), null);
-    JsonNode parsed = mapper.readTree((String) ev.data());
-    assertThat(parsed.path("usage").isNull()).isTrue();
-  }
-
-  @Test
-  void custoBrlBigDecimalPreservaEscala() {
-    ServerSentEvent<Object> ev = events.done(1L, new BigDecimal("0.053000"), null);
-    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
-    // BigDecimal serializado preserva a escala definida, sem virar notacao cientifica
-    assertThat(parsed.path("custo_brl").asText()).isEqualTo("0.053000");
-  }
-
-  @Test
-  void imagemCarregaBase64Puro() {
-    ServerSentEvent<Object> ev = events.imagem("aG VsbG8=");
-    assertThat(ev.event()).isEqualTo("imagem");
-    assertThat(ev.data()).isEqualTo("aG VsbG8=");
-  }
-
-  @Test
-  void errorCarregaMensagemELatencia() {
-    ServerSentEvent<Object> ev = events.error("OPENAI_API_KEY ausente", 50L);
-    assertThat(ev.event()).isEqualTo("error");
-    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
-    assertThat(parsed.path("error").asText()).isEqualTo("OPENAI_API_KEY ausente");
-    assertThat(parsed.path("latency_ms").asLong()).isEqualTo(50L);
-  }
-
-  @Test
-  void errorEscapaAspasNaMensagem() {
-    ServerSentEvent<Object> ev = events.error("mensagem com \"aspas\"", 1L);
-    JsonNode parsed = new ObjectMapper().readTree((String) ev.data());
-    assertThat(parsed.path("error").asText()).isEqualTo("mensagem com \"aspas\"");
-  }
-}
+ServerSentEvent<Object> status(String fase)
+ServerSentEvent<Object> ping()                         // sem data
+ServerSentEvent<Object> done(long latencyMs, BigDecimal custoBrl, JsonNode usage)
+ServerSentEvent<Object> imagem(String b64)             // base64 puro, NÃO JSON
+ServerSentEvent<Object> error(String error, long latencyMs)
 ```
 
-> **Notas de teste:** os testes fazem parse reverso do `data` via `readTree` e validam campos. Isso é robusto (não depende de formatação de string exata) e prova que o JSON é válido. O teste `custoBrlBigDecimalPreservaEscala` documenta a razão de usar Jackson: `BigDecimal` com escala é preservado, sem degradar para `5.3E-2`.
+**Regras de domínio:**
+- Cada payload JSON é um record de payload serializado via `ObjectMapper`. Exemplo: `StatusPayload(String fase)`, `DonePayload(long latency_ms, BigDecimal custo_brl, JsonNode usage)`, `ErrorPayload(String error, long latency_ms)`.
+- `imagem` é a exceção: o `data` é o base64 cru, sem envelope JSON (o PlantUML explicita `data: <base64 PNG puro>`).
+- `ping` não tem `data`.
+- `usage` pode ser null; serializa como `null` no JSON.
 
-- [ ] **Step 2: Run test to verify it fails**
+**Critérios de aceite (testes):**
+- `status` produz JSON válido com a fase (faça parse reverso via `readTree`, não caseie substring).
+- `done` produz JSON com `latency_ms`, `custo_brl`, `usage`. Valide via parse reverso.
+- `done` com `usage=null` serializa o campo como `null`.
+- `custo_brl` como `BigDecimal` preserva escala (ex.: `0.053000` não vira `5.3E-2`). Este teste documenta a razão de usar Jackson.
+- `imagem` retorna o base64 cru como `data`.
+- `error` escapa aspas na mensagem (ex.: `mensagem com "aspas"`). Valide via parse reverso.
 
-Run: `make test`
-Expected: FAIL — `SseEvents` não existe.
+**Notas de design:**
+- Componente Spring (`@Component`), não estática, porque precisa do `ObjectMapper` injetado pelo Spring.
+- Os records de payload são privados (detalhe de implementação da serialização, não API pública).
 
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.web;
-
-import java.math.BigDecimal;
-import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
-/**
- * Fabrica de eventos SSE para o stream de edicao de imagem. Serializa os payloads via
- * {@link ObjectMapper} (records + Jackson), nunca por concatenacao de strings. Isola o formato de
- * cada evento (status, ping, done, imagem, error) num unico lugar.
- */
-@Component
-public final class SseEvents {
-
-  private final ObjectMapper mapper;
-
-  /**
-   * Construtor.
-   *
-   * @param mapper ObjectMapper do Spring (Jackson 3)
-   */
-  public SseEvents(ObjectMapper mapper) {
-    this.mapper = mapper;
-  }
-
-  /** Evento de status com a fase do processamento. */
-  public ServerSentEvent<Object> status(String fase) {
-    return sse("status", json(new StatusPayload(fase)));
-  }
-
-  /** Heartbeat. Sem data. */
-  public ServerSentEvent<Object> ping() {
-    return ServerSentEvent.builder().event("ping").build();
-  }
-
-  /** Evento final com metadados. */
-  public ServerSentEvent<Object> done(long latencyMs, BigDecimal custoBrl, JsonNode usage) {
-    return sse("done", json(new DonePayload(latencyMs, custoBrl, usage)));
-  }
-
-  /** Imagem final em base64 puro (nao JSON). */
-  public ServerSentEvent<Object> imagem(String b64) {
-    return sse("imagem", b64);
-  }
-
-  /** Evento de erro de dominio. */
-  public ServerSentEvent<Object> error(String error, long latencyMs) {
-    return sse("error", json(new ErrorPayload(error, latencyMs)));
-  }
-
-  private static ServerSentEvent<Object> sse(String event, String data) {
-    return ServerSentEvent.builder().event(event).data(data).build();
-  }
-
-  private String json(Object payload) {
-    try {
-      return mapper.writeValueAsString(payload);
-    } catch (tools.jackson.core.JacksonException e) {
-      // Records simples nunca falham na serializacao; falha aqui e bug de programacao.
-      throw new IllegalStateException("falha serializando payload SSE: " + e.getMessage(), e);
-    }
-  }
-
-  /** Payload do evento status. */
-  private record StatusPayload(String fase) {}
-
-  /** Payload do evento done. */
-  private record DonePayload(long latency_ms, BigDecimal custo_brl, JsonNode usage) {}
-
-  /** Payload do evento error. */
-  private record ErrorPayload(String error, long latency_ms) {}
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/web/SseEvents.java \
-        src/test/java/com/marmore/api/imageedit/web/SseEventsTest.java
-git commit -m "feat(sse): adiciona fabrica SseEvents com payloads via ObjectMapper"
-```
+- [ ] **Step 1:** Escreva os testes de comportamento. Use parse reverso do JSON para validar.
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente com records de payload + `ObjectMapper`. Aplique Effective Java (encapsule os records de payload como privados).
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(sse): SseEvents serializa payloads via ObjectMapper`
 
 ---
 
 ## Task 6: `ImageEditException` migrada
 
-A exceção de domínio deixa de estender `ResponseStatusException` (servlet) e passa a estender `RuntimeException` (reativo). Usada pelo handler.
+**Problema:** A exceção de domínio hoje estende `ResponseStatusException` (servlet). No WebFlux precisa ser uma `RuntimeException` com o status HTTP embutido, para o `WebExceptionHandler` traduzir.
+
+**Responsabilidade:** carregar status HTTP + mensagem.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/web/ImageEditException.java`
 - Test: `src/test/java/com/marmore/api/imageedit/web/ImageEditExceptionTest.java`
 
-**Interfaces:**
-- Produces: `class ImageEditException extends RuntimeException` com campo `status` (HttpStatus) e `message`.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.web;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-
-class ImageEditExceptionTest {
-
-  @Test
-  void carregaStatusEMensagem() {
-    ImageEditException ex = new ImageEditException(HttpStatus.SERVICE_UNAVAILABLE, "sem key");
-    assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-    assertThat(ex.getMessage()).isEqualTo("sem key");
-  }
-}
+```
+ImageEditException(HttpStatus status, String message)
+HttpStatus getStatus()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Estende `RuntimeException`. Imutável (campos `final`).
 
-Run: `make test`
-Expected: FAIL — `ImageEditException` em `imageedit` não existe.
+**Critérios de aceite (testes):**
+- Carrega status e mensagem.
+- É uma `RuntimeException` (pode ser lançada sem declarar).
 
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.web;
-
-import org.springframework.http.HttpStatus;
-
-/**
- * Excecao de dominio da edicao de imagem. Carrega o status HTTP semantico para o
- * {@code GlobalWebExceptionHandler} traduzir.
- */
-public final class ImageEditException extends RuntimeException {
-
-  private final HttpStatus status;
-
-  /**
-   * Construtor.
-   *
-   * @param status status HTTP semantico
-   * @param message mensagem de erro
-   */
-  public ImageEditException(HttpStatus status, String message) {
-    super(message);
-    this.status = status;
-  }
-
-  public HttpStatus getStatus() {
-    return status;
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/web/ImageEditException.java \
-        src/test/java/com/marmore/api/imageedit/web/ImageEditExceptionTest.java
-git commit -m "feat(web): adiciona ImageEditException reativa"
-```
+- [ ] **Step 1:** Escreva o teste.
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente.
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(web): ImageEditException reativa`
 
 ---
 
 ## Task 7: Move pacote `image` → `imageedit` (records puros)
 
-Move os records de dados e classes puras que não dependem de web/RestClient. Faz o rename de pacote e ajusta imports. Sem mudança de lógica.
+**Problema:** Migrar para feature-folder. Os records e classes puras (sem dependência web/HTTP) movem de `image` para `imageedit`. Sem mudança de lógica.
 
-**Atenção:** Esta task mexe em muitos arquivos. Faça `git mv` para preservar histórico. Os testes correspondentes também movem.
+**Files:** ver `File Structure` no spec. Mova: `ai/*` (exceto `ImageEditModel`, `OpenAiRestClientImageEditModel` que serão reescritos), `domain/*`, `service/ImageResizer`, `io/*`, `config/ImageEditProperties`.
 
-**Files:**
-- Move: `image/ai/{ImageEditPrompt, AiImageOptions, InputImage, ImageResponse, ImageResponseMetadata, ImageGeneration, Image}.java` → `imageedit/ai/`
-- Move: `image/ai/AiImageException.java` → `imageedit/ai/`
-- Move: `image/domain/{GenerateResult, EditPrompts}.java` → `imageedit/domain/`
-- Move: `image/service/ImageResizer.java` → `imageedit/service/`
-- Move: `image/io/{ImageResultWriter, FileSystemResultWriter}.java` → `imageedit/io/`
-- Move: `image/config/ImageEditProperties.java` → `imageedit/config/`
-- Move testes correspondentes.
+**Como:** use `git mv` para preservar histórico. Atualize `package` e imports.
 
-- [ ] **Step 1: Move arquivos main**
+**Atenção:** esta task deixa o build temporariamente quebrado se feita isoladamente, porque `ImageEditService`, `OpenAiRestClientImageEditModel`, `ImageEditController`, `RestClientConfig` (ainda no pacote velho) referenciam os records movidos. Para manter verde, atualize os imports nesses arquivos também (eles serão reescritos nas tasks seguintes, mas precisam compilar agora).
 
-```bash
-mkdir -p src/main/java/com/marmore/api/imageedit/{ai,domain,service,io,config,web,cost}
-mkdir -p src/test/java/com/marmore/api/imageedit/{ai,domain,service,io,config,web,cost}
+**Critérios de aceite:**
+- `make test` passa.
+- `find src -path "*/imageedit/*" -name "*.java"` lista os arquivos movidos.
+- Nenhum arquivo `.java` permanece em `com.marmore.api.image.*` (exceto os que serão removidos nas próximas tasks).
 
-# main
-git mv src/main/java/com/marmore/api/image/ai/ImageEditPrompt.java      src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/AiImageOptions.java       src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/InputImage.java           src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/ImageResponse.java        src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/ImageResponseMetadata.java src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/ImageGeneration.java      src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/Image.java                src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/ai/AiImageException.java     src/main/java/com/marmore/api/imageedit/ai/
-git mv src/main/java/com/marmore/api/image/domain/GenerateResult.java   src/main/java/com/marmore/api/imageedit/domain/
-git mv src/main/java/com/marmore/api/image/domain/EditPrompts.java      src/main/java/com/marmore/api/imageedit/domain/
-git mv src/main/java/com/marmore/api/image/service/ImageResizer.java    src/main/java/com/marmore/api/imageedit/service/
-git mv src/main/java/com/marmore/api/image/io/ImageResultWriter.java    src/main/java/com/marmore/api/imageedit/io/
-git mv src/main/java/com/marmore/api/image/io/FileSystemResultWriter.java src/main/java/com/marmore/api/imageedit/io/
-git mv src/main/java/com/marmore/api/image/config/ImageEditProperties.java src/main/java/com/marmore/api/imageedit/config/
-```
-
-- [ ] **Step 2: Move testes correspondentes**
-
-```bash
-git mv src/test/java/com/marmore/api/image/ai/AiImageOptionsTest.java        src/test/java/com/marmore/api/imageedit/ai/
-git mv src/test/java/com/marmore/api/image/ai/ImageEditPromptTest.java       src/test/java/com/marmore/api/imageedit/ai/
-git mv src/test/java/com/marmore/api/image/ai/ImageResponseTest.java         src/test/java/com/marmore/api/imageedit/ai/
-git mv src/test/java/com/marmore/api/image/domain/GenerateResultTest.java    src/test/java/com/marmore/api/imageedit/domain/
-git mv src/test/java/com/marmore/api/image/domain/EditPromptsTest.java       src/test/java/com/marmore/api/imageedit/domain/
-git mv src/test/java/com/marmore/api/image/service/ImageResizerTest.java     src/test/java/com/marmore/api/imageedit/service/
-git mv src/test/java/com/marmore/api/image/io/FileSystemResultWriterTest.java src/test/java/com/marmore/api/imageedit/io/
-git mv src/test/java/com/marmore/api/image/config/ImageEditPropertiesTest.java src/test/java/com/marmore/api/imageedit/config/
-```
-
-- [ ] **Step 3: Atualize declaração `package` e imports**
-
-Em todos os arquivos movidos (main + test), troque `package com.marmore.api.image.` por `package com.marmore.api.imageedit.`. Exemplo com sed:
-
-```bash
-find src -path "*/imageedit/*" -name "*.java" -print0 \
-  | xargs -0 sed -i 's/com\.marmore\.api\.image\./com.marmore.api.imageedit./g'
-```
-
-Depois ajuste imports de `image.web.ImageEditException` (ainda no pacote velho temporariamente nesta task) — deixe como está se ainda não migrou; será resolvido quando o controller velho for removido na Task 11.
-
-- [ ] **Step 4: Compile e rode testes**
-
-Run: `make test`
-Expected: pode haver erros de compilação porque `ImageEditService` (ainda em `image.service`) referencia o pacote velho. Estes serão resolvidos na Task 8 quando o service migrar. **Se houver erros de compilação somente em arquivos que serão migrados nas próximas tasks (`ImageEditService`, `OpenAiRestClientImageEditModel`, `ImageEditController`, `RestClientConfig`), está aceitável por enquanto — anote-os e continue.** O objetivo desta task é mover os records puros.
-
-Na prática, como os records puros movidos são referenciados pelo service/controller que ainda estão no pacote velho, o build vai quebrar. Para manter o build verde, migre **junto** nesta task os imports dos arquivos ainda-não-movidos (`ImageEditService`, `OpenAiRestClientImageEditModel`, `ImageEditController`, `RestClientConfig`):
-
-```bash
-# atualiza imports nos arquivos que continuam no pacote velho (serao reescritos depois)
-sed -i 's/com\.marmore\.api\.image\.ai\./com.marmore.api.imageedit.ai./g; s/com\.marmore\.api\.image\.domain\./com.marmore.api.imageedit.domain./g; s/com\.marmore\.api\.image\.service\./com.marmore.api.imageedit.service./g; s/com\.marmore\.api\.image\.io\./com.marmore.api.imageedit.io./g; s/com\.marmore\.api\.image\.config\./com.marmore.api.imageedit.config./g' \
-  src/main/java/com/marmore/api/image/service/ImageEditService.java \
-  src/main/java/com/marmore/api/image/ai/OpenAiRestClientImageEditModel.java \
-  src/main/java/com/marmore/api/image/web/ImageEditController.java \
-  src/main/java/com/marmore/api/image/config/RestClientConfig.java \
-  src/test/java/com/marmore/api/image/service/ImageEditServiceTest.java \
-  src/test/java/com/marmore/api/image/ai/OpenAiRestClientImageEditModelTest.java \
-  src/test/java/com/marmore/api/image/web/ImageEditControllerTest.java \
-  src/test/java/com/marmore/api/image/web/ImageUploadSizeTest.java \
-  src/test/java/com/marmore/api/image/config/RestClientConfigTest.java
-```
-
-Run: `make test`
-Expected: PASS (build verde, testes dos records puros passando).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add -A
-git commit -m "refactor(image): move records puros para pacote imageedit"
-```
+- [ ] **Step 1:** `git mv` os arquivos main e test.
+- [ ] **Step 2:** Atualize `package` e imports (`sed` ou manual).
+- [ ] **Step 3:** Rode `make test`, confirme PASS.
+- [ ] **Step 4:** Commit: `refactor(image): move records puros para pacote imageedit`
 
 ---
 
 ## Task 8: `ImageEditModel` reativo
 
-Migra a interface do gateway para reativo. `call(prompt) → Mono<ImageResponse>`.
+**Problema:** O gateway hoje é síncrono (`ImageResponse call(prompt)`). No fluxo SSE reativo, precisa retornar `Mono<ImageResponse>` que completa quando a OpenAI responde.
+
+**Responsabilidade:** contrato do gateway reativo.
 
 **Files:**
-- Modify: `src/main/java/com/marmore/api/image/ai/ImageEditModel.java` (criar versão reativa em `imageedit/ai/`)
 - Create: `src/main/java/com/marmore/api/imageedit/ai/ImageEditModel.java`
 - Test: `src/test/java/com/marmore/api/imageedit/ai/ImageEditModelTest.java`
 
-**Interfaces:**
-- Produces: `Mono<ImageResponse> call(ImageEditPrompt prompt)`
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.ai;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
-
-class ImageEditModelTest {
-
-  @Test
-  void implementacaoLambdaRetornaMono() {
-    ImageEditModel model = prompt -> Mono.just(ImageResponseTest.respostaSimples());
-    assertThat(model.call(null)).isInstanceOf(Mono.class);
-  }
-}
 ```
-
-(Se `ImageResponseTest.respostaSimples()` não for acessível, crie um helper local ou use `ImageResponse.of(...)` no teste.)
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `make test`
-Expected: FAIL — `ImageEditModel` reativo não existe.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.ai;
-
-import reactor.core.publisher.Mono;
-
-/**
- * Gateway de edicao de imagem. Contrato reativo: retorna {@link Mono} que completa ao receber a
- * resposta da API de imagens.
- */
 @FunctionalInterface
-public interface ImageEditModel {
-
-  /**
-   * Chama a API de edicao de imagem.
-   *
-   * @param prompt prompt com instrucoes, opcoes e imagens de entrada
-   * @return resposta encapsulada em Mono
-   */
+interface ImageEditModel {
   Mono<ImageResponse> call(ImageEditPrompt prompt);
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+**Critérios de aceite (testes):**
+- Implementação lambda retorna um `Mono`.
 
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/ai/ImageEditModel.java \
-        src/test/java/com/marmore/api/imageedit/ai/ImageEditModelTest.java
-git commit -m "feat(ai): interface ImageEditModel reativa (Mono<ImageResponse>)"
-```
+- [ ] **Step 1:** Escreva o teste (lambda retorna Mono).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente a interface funcional.
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(ai): interface ImageEditModel reativa`
 
 ---
 
 ## Task 9: `OpenAiWebClientImageEditModel` (streaming SSE)
 
-Gateway WebClient que consome o stream SSE da OpenAI. Envia `stream=true`, `partial_images=0`, lê o corpo como `Flux<String>` de linhas SSE, parseia o evento `image_generation.completed`, extrai `b64_json` + `usage`.
+**Problema:** O gateway precisa consumir o stream SSE da OpenAI (`POST /v1/images/edits` com `stream=true`, `partial_images=0`), em vez de fazer um POST síncrono esperando JSON. Com `partial_images=0`, a OpenAI emite apenas o evento final `image_generation.completed` com a imagem + usage.
+
+**Responsabilidade:** montar o multipart (com `stream=true` e `partial_images=0`), abrir o stream, parsear o evento `image_generation.completed`, extrair `b64_json`/`image_b64` e `usage`. Falhas viram `AiImageException`.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/ai/OpenAiWebClientImageEditModel.java`
 - Test: `src/test/java/com/marmore/api/imageedit/ai/OpenAiWebClientImageEditModelTest.java`
 
-**Interfaces:**
-- Consumes: `WebClient` (bean `imageWebClient` da Task 10), `ImageEditPrompt`.
-- Produces: `Mono<ImageResponse>` via `call(prompt)`.
-
-**Formato do stream SSE da OpenAI** (referência para o parse):
+**API pública esperada:**
 
 ```
-event: image_generation.completed
-data: {"type":"image_generation.completed","image_b64":"<base64>","usage":{"input_tokens":N,"output_tokens":N}}
-
+OpenAiWebClientImageEditModel(WebClient webClient)     // bean imageWebClient da Task 10
+Mono<ImageResponse> call(ImageEditPrompt prompt)
 ```
 
-> **Nota de implementação:** o campo da imagem no evento `completed` pode ser `image_b64` (não `b64_json` como no endpoint síncrono). Durante o TDD, valide o campo real contra uma resposta capturada da OpenAI. Se o campo for diferente do esperado, ajuste o parser nesta task.
+**Regras de domínio:**
+- Multipart inclui `prompt`, `stream=true`, `partial_images=0`, e condicionalmente `model`, `n`, `size`, `quality`, `input_fidelity` (como hoje), e `image[]` (preservando ordem: ambiente, pedra).
+- Lê o corpo como `Flux<String>` de linhas SSE, filtra por linhas `data:`, identifica o evento `image_generation.completed`.
+- Extrai a imagem (`image_b64` ou `b64_json` — valide qual campo real contra uma resposta capturada da OpenAI durante a implementação) e `usage`.
+- Erro HTTP (4xx/5xx) durante a abertura ou no stream → `AiImageException`.
 
-- [ ] **Step 1: Write the failing test**
+**Critérios de aceite (testes com `MockWebServer`):**
+- Stream com evento `image_generation.completed` → completa com `ImageResponse` contendo b64 + usage.
+- Erro HTTP 500 → `AiImageException`.
+- Stream sem evento `completed` (incompleto) → `AiImageException` ou não-completa (decida e documente).
 
-```java
-package com.marmore.api.imageedit.ai;
+**Notas de design:**
+- Preserve a `NamedBytesResource` (inner class que dá nome ao `ByteArrayResource` para o multipart). Reimplemente-a localmente ou extraia para top-level.
+- `ObjectMapper` para parse do JSON do evento (não concatenação).
 
-import static org.assertj.core.api.Assertions.assertThat;
+**Risco documentado:** o campo exato da imagem no evento `completed` (`image_b64` vs `b64_json`) pode divergir da documentação. O parser deve tentar ambos. Valide contra uma resposta real durante a implementação.
 
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.test.StepVerifier;
-
-class OpenAiWebClientImageEditModelTest {
-
-  private static MockWebServer server;
-  private static OpenAiWebClientImageEditModel model;
-
-  @BeforeAll
-  static void setUp() throws Exception {
-    server = new MockWebServer();
-    server.start();
-    WebClient client = WebClient.builder().baseUrl(server.url("/").toString()).build();
-    model = new OpenAiWebClientImageEditModel(client);
-  }
-
-  @AfterAll
-  static void tearDown() throws Exception {
-    server.shutdown();
-  }
-
-  @Test
-  void parseiaEventoCompletedDoStream() {
-    String sse =
-        "event: image_generation.completed\n"
-            + "data: {\"type\":\"image_generation.completed\",\"image_b64\":\"aGk=\",\"usage\":{\"input_tokens\":10,\"output_tokens\":20}}\n\n";
-    server.enqueue(
-        new MockResponse()
-            .setHeader("Content-Type", "text/event-stream")
-            .setBody(sse));
-    StepVerifier.create(model.call(promptSimples()))
-        .assertNext(
-            resp -> {
-              assertThat(resp.getResult().output().b64Json()).isEqualTo("aGk=");
-              assertThat(resp.metadata().usage().path("output_tokens").asInt()).isEqualTo(20);
-            })
-        .verifyComplete();
-  }
-
-  @Test
-  void erroHttpViraAiImageException() {
-    server.enqueue(new MockResponse().setResponseCode(500).setBody("boom"));
-    StepVerifier.create(model.call(promptSimples()))
-        .expectError(AiImageException.class)
-        .verify();
-  }
-
-  private static ImageEditPrompt promptSimples() {
-    return ImageEditPrompt.of(
-        "prompt teste",
-        AiImageOptions.defaults(),
-        java.util.List.of(InputImage.of(new byte[] {1, 2}, "ambiente.jpg")));
-  }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `make test`
-Expected: FAIL — `OpenAiWebClientImageEditModel` não existe.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.ai;
-
-import com.marmore.api.imageedit.ai.OpenAiRestClientImageEditModel.NamedBytesResource;
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
-import reactor.core.publisher.Mono;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
-/**
- * Implementacao de {@link ImageEditModel} que fala com a OpenAI via {@code WebClient}, consumindo o
- * stream SSE do {@code /v1/images/edits} com {@code stream=true} e {@code partial_images=0}.
- * Retorna um {@link Mono} que completa ao receber o evento {@code image_generation.completed}.
- */
-@Component
-public class OpenAiWebClientImageEditModel implements ImageEditModel {
-
-  private static final String EDITS_PATH = "/v1/images/edits";
-  private static final ObjectMapper MAPPER = new ObjectMapper();
-
-  private final WebClient webClient;
-
-  /**
-   * Construtor.
-   *
-   * @param webClient cliente HTTP autenticado para a OpenAI (bean {@code imageWebClient})
-   */
-  public OpenAiWebClientImageEditModel(WebClient webClient) {
-    this.webClient = webClient;
-  }
-
-  @Override
-  public Mono<ImageResponse> call(ImageEditPrompt prompt) {
-    return webClient
-        .post()
-        .uri(EDITS_PATH)
-        .contentType(MediaType.MULTIPART_FORM_DATA)
-        .bodyValue(multipartDe(prompt))
-        .retrieve()
-        .bodyToFlux(String.class)
-        .filter(linha -> linha.startsWith("data:"))
-        .map(linha -> linha.substring("data:".length()).trim())
-        .filter(json -> json.contains("image_generation.completed"))
-        .next()
-        .map(OpenAiWebClientImageEditModel::respostaDe)
-        .onErrorMap(
-            e -> !(e instanceof AiImageException),
-            e ->
-                new AiImageException(
-                    e.getClass().getSimpleName() + ": " + e.getMessage(), e));
-  }
-
-  /** Monta o multipart com stream=true e partial_images=0. */
-  private static MultiValueMap<String, Object> multipartDe(ImageEditPrompt prompt) {
-    AiImageOptions opts = prompt.options();
-    MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-    body.add("prompt", prompt.instructions());
-    body.add("stream", "true");
-    body.add("partial_images", "0");
-    if (opts.model() != null) {
-      body.add("model", opts.model());
-    }
-    if (opts.n() != null) {
-      body.add("n", opts.n());
-    }
-    if (opts.size() != null) {
-      body.add("size", opts.size());
-    }
-    if (opts.quality() != null) {
-      body.add("quality", opts.quality());
-    }
-    if (opts.sendsFidelity()) {
-      body.add("input_fidelity", opts.inputFidelity());
-    }
-    for (InputImage img : prompt.inputImages()) {
-      body.add("image[]", new NamedBytesResource(img.bytes(), img.filename()));
-    }
-    return body;
-  }
-
-  /** Traduz o JSON do evento completed em {@link ImageResponse}. */
-  private static ImageResponse respostaDe(String json) {
-    try {
-      JsonNode node = MAPPER.readTree(json);
-      String b64 = node.path("image_b64").asText(null);
-      if (b64 == null) {
-        b64 = node.path("b64_json").asText(null);
-      }
-      if (b64 == null) {
-        throw new AiImageException("resposta sem image_b64/b64_json");
-      }
-      JsonNode usage = node.has("usage") ? node.get("usage") : null;
-      return new ImageResponse(
-          java.util.List.of(ImageGeneration.of(Image.of(b64))),
-          new ImageResponseMetadata(usage),
-          node);
-    } catch (AiImageException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new AiImageException("erro parseando resposta: " + e.getMessage(), e);
-    }
-  }
-}
-```
-
-> **Reuse de `NamedBytesResource`:** a Task 10 remove `OpenAiRestClientImageEditModel`, mas a inner class `NamedBytesResource` precisa sobreviver. Duas opções: (a) torná-la top-level em `imageedit/ai/` antes de remover o RestClient, ou (b) redefini-la como inner class nesta task (código acima já redefine localmente). Esta task usa a opção (b) para manter o diff local. Verifique se há duplicação ao remover o RestClient na Task 10.
-
-Na implementação acima, substitua o import problemático removendo a linha `import com.marmore.api.imageedit.ai.OpenAiRestClientImageEditModel.NamedBytesResource;` e use a inner class local definida abaixo (adicione ao final da classe):
-
-```java
-  /** ByteArrayResource com nome de arquivo, necessario para multipart. */
-  private static final class NamedBytesResource extends ByteArrayResource {
-    private final String filename;
-
-    NamedBytesResource(byte[] bytes, String filename) {
-      super(bytes);
-      this.filename = filename;
-    }
-
-    @Override
-    public String getFilename() {
-      return filename;
-    }
-  }
-```
-
-E adicione o import `import org.springframework.core.io.ByteArrayResource;` no topo.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/ai/OpenAiWebClientImageEditModel.java \
-        src/test/java/com/marmore/api/imageedit/ai/OpenAiWebClientImageEditModelTest.java
-git commit -m "feat(ai): gateway WebClient consumindo stream SSE da OpenAI"
-```
+- [ ] **Step 1:** Escreva os testes com `MockWebServer` (evento completed, erro HTTP).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente. Pense no parse do stream SSE (linha a linha vs evento completo).
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(ai): gateway WebClient consumindo stream SSE da OpenAI`
 
 ---
 
 ## Task 10: `WebClientConfig`
 
-Configura o bean `imageWebClient` com baseUrl, Bearer e read timeout. Substitui `RestClientConfig`.
+**Problema:** Substituir o `RestClientConfig` (bean `imageRestClient` com RestClient) por um bean `imageWebClient` com WebClient, mantendo base-url, Bearer auth e read timeout.
+
+**Responsabilidade:** configurar o WebClient do módulo de imagem.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/config/WebClientConfig.java`
 - Test: `src/test/java/com/marmore/api/imageedit/config/WebClientConfigTest.java`
-- Remove: `src/main/java/com/marmore/api/image/ai/OpenAiRestClientImageEditModel.java` (depois de validar que `NamedBytesResource` foi preservada na Task 9)
-- Remove: `src/main/java/com/marmore/api/image/config/RestClientConfig.java`
-- Remove: `src/test/java/com/marmore/api/image/ai/OpenAiRestClientImageEditModelTest.java`
-- Remove: `src/test/java/com/marmore/api/image/config/RestClientConfigTest.java`
+- Remove: `image/config/RestClientConfig.java` + teste.
+- Remove: `image/ai/OpenAiRestClientImageEditModel.java` + teste (após confirmar que `NamedBytesResource` foi preservada na Task 9).
 
-**Interfaces:**
-- Consumes: `ImageEditProperties` (baseUrl, apiKey, timeout).
-- Produces: bean `WebClient imageWebClient`.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.config;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import com.marmore.api.imageedit.config.ImageEditProperties;
-import java.time.Duration;
-import org.junit.jupiter.api.Test;
-import org.springframework.web.reactive.function.client.WebClient;
-
-class WebClientConfigTest {
-
-  @Test
-  void beanWebClientTemBaseUrlConfigurada() {
-    ImageEditProperties props = new ImageEditProperties();
-    props.setBaseUrl("https://api.openai.com");
-    props.setApiKey("sk-teste");
-    props.setTimeout(Duration.ofSeconds(180));
-    WebClient client = new WebClientConfig().imageWebClient(props, WebClient.builder());
-    assertThat(client).isNotNull();
-  }
-}
+```
+@Bean WebClient imageWebClient(ImageEditProperties props, WebClient.Builder builder)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+**Regras de domínio:**
+- `baseUrl` = `props.getBaseUrl()`.
+- `Authorization: Bearer <apiKey>` como default header.
+- Read timeout = `props.getTimeout()` aplicado no Netty (`ReadTimeoutHandler` no `HttpClient`).
 
-Run: `make test`
-Expected: FAIL — `WebClientConfig` não existe.
+**Critérios de aceite (testes):**
+- Bean é construído sem erro com properties válidas.
 
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.imageedit.config;
-
-import io.netty.handler.timeout.ReadTimeoutHandler;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
-
-/**
- * Configura o {@link WebClient} para a OpenAI. Base URL, Authorization Bearer e read timeout vem de
- * {@link ImageEditProperties}. O read timeout e aplicado no Netty (reactor-netty), equivalente ao
- * que o {@code RestClientConfig} fazia no RestClient via customizer.
- */
-@Configuration
-public class WebClientConfig {
-
-  /**
-   * Bean do WebClient da OpenAI.
-   *
-   * @param props propriedades do modulo de imagem
-   * @param builder builder de WebClient fornecido pela auto-config
-   * @return WebClient configurado
-   */
-  @Bean
-  public WebClient imageWebClient(ImageEditProperties props, WebClient.Builder builder) {
-    long timeoutSeconds = props.getTimeout().toSeconds();
-    HttpClient httpClient =
-        HttpClient.create()
-            .doOnConnected(
-                c ->
-                    c.addHandlerLast(
-                        new ReadTimeoutHandler((int) timeoutSeconds)));
-    return builder
-        .baseUrl(props.getBaseUrl())
-        .defaultHeader("Authorization", "Bearer " + props.getApiKey())
-        .clientConnector(new ReactorClientHttpConnector(httpClient))
-        .build();
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Remove o RestClient antigo**
-
-```bash
-git rm src/main/java/com/marmore/api/image/ai/OpenAiRestClientImageEditModel.java
-git rm src/main/java/com/marmore/api/image/config/RestClientConfig.java
-git rm src/test/java/com/marmore/api/image/ai/OpenAiRestClientImageEditModelTest.java
-git rm src/test/java/com/marmore/api/image/config/RestClientConfigTest.java
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add -A
-git commit -m "refactor(config): WebClientConfig substitui RestClientConfig
-
-- bean imageWebClient com baseUrl, Bearer, read timeout (Netty)
-- remove OpenAiRestClientImageEditModel e RestClientConfig
-- NamedBytesResource preservada como inner class do gateway WebClient"
-```
+- [ ] **Step 1:** Escreva o teste do bean.
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente o `WebClientConfig`.
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Remova `RestClientConfig`, `OpenAiRestClientImageEditModel` e seus testes (`git rm`).
+- [ ] **Step 6:** Commit: `refactor(config): WebClientConfig substitui RestClientConfig`
 
 ---
 
 ## Task 11: `ImageEditService` reativo
 
-Migra o service para `Mono<GenerateResult>`. Reaproveita a lógica síncrona envolta em `Mono.fromCallable` + `boundedElastic` para as partes bloqueantes (resize, leitura de pedra), mas encadeia o `Mono<ImageResponse>` do gateway reativo.
+**Problema:** O service hoje é síncrono (`GenerateResult generate(byte[])`). Precisa retornar `Mono<GenerateResult>` que orquestra validações + resize + chamada ao gateway reativo + cálculo de custo.
+
+**Responsabilidade:** orquestrar o pipeline. Sem I/O direto (delega ao gateway e ao resizer).
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/service/ImageEditService.java`
 - Test: `src/test/java/com/marmore/api/imageedit/service/ImageEditServiceTest.java`
-- Remove: `src/main/java/com/marmore/api/image/service/ImageEditService.java` (velho, pacote `image`)
-- Remove: `src/test/java/com/marmore/api/image/service/ImageEditServiceTest.java`
+- Remove: `image/service/ImageEditService.java` + teste.
 
-**Interfaces:**
-- Consumes: `ImageEditProperties`, `ImageResizer`, `ImageEditModel` (reativo), `ImageCostCalculator`, `UsdBrlProvider`.
-- Produces: `Mono<GenerateResult> generate(byte[] ambiente)`.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.imageedit.service;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
-import com.marmore.api.imageedit.ai.AiImageOptions;
-import com.marmore.api.imageedit.ai.ImageEditModel;
-import com.marmore.api.imageedit.ai.ImageEditPrompt;
-import com.marmore.api.imageedit.ai.ImageResponse;
-import com.marmore.api.imageedit.ai.ImageResponseTest;
-import com.marmore.api.imageedit.config.ImageEditProperties;
-import com.marmore.api.imageedit.cost.ImageCostCalculator;
-import com.marmore.api.imageedit.cost.UsdBrlProvider;
-import java.nio.file.Path;
-import java.time.Duration;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
-
-class ImageEditServiceTest {
-
-  @TempDir Path tempDir;
-  private ImageEditProperties props;
-  private ImageResizer resizer;
-  private ImageEditModel model;
-  private ImageCostCalculator calculator;
-  private UsdBrlProvider usdBrl;
-
-  @BeforeEach
-  void setUp() throws Exception {
-    props = new ImageEditProperties();
-    props.setApiKey("sk-teste");
-    // cria pedra em disco
-    Path pedra = tempDir.resolve("granito.png");
-    java.nio.file.Files.write(pedra, new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47});
-    props.setStonePath(pedra);
-    props.setTimeout(Duration.ofSeconds(180));
-    resizer = mock(ImageResizer.class);
-    model = mock(ImageEditModel.class);
-    calculator = new ImageCostCalculator();
-    usdBrl = mock(UsdBrlProvider.class);
-    when(usdBrl.currentRate()).thenReturn(Mono.just(new java.math.BigDecimal("5.1075")));
-  }
-
-  @Test
-  void sucessoRetornaOkComB64() {
-    when(resizer.resize(any())).thenReturn(java.util.Optional.of(new byte[] {1, 2}));
-    ImageResponse resp = ImageResponseTest.respostaSimples();
-    when(model.call(any())).thenReturn(Mono.just(resp));
-    ImageEditService svc =
-        new ImageEditService(props, resizer, model, calculator, usdBrl);
-    StepVerifier.create(svc.generate(new byte[] {1}))
-        .assertNext(
-            r -> {
-              assertThat(r).isInstanceOf(GenerateResult.Ok.class);
-              assertThat(((GenerateResult.Ok) r).b64()).isNotBlank();
-            })
-        .verifyComplete();
-  }
-
-  @Test
-  void apiKeyAusenteViraErr() {
-    props.setApiKey(null);
-    ImageEditService svc = new ImageEditService(props, resizer, model, calculator, usdBrl);
-    StepVerifier.create(svc.generate(new byte[] {1}))
-        .assertNext(
-            r -> {
-              assertThat(r).isInstanceOf(GenerateResult.Err.class);
-              assertThat(((GenerateResult.Err) r).error()).startsWith("OPENAI_API_KEY");
-            })
-        .verifyComplete();
-  }
-}
+```
+ImageEditService(ImageEditProperties, ImageResizer, ImageEditModel, ImageCostCalculator, UsdBrlProvider)
+Mono<GenerateResult> generate(byte[] ambiente)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+**Regras de domínio:**
+- Validações síncronas no início (apiKey OpenAI ausente → `Err`; pedra não encontrada em disco → `Err`).
+- `resize` (bloqueante) em `Mono.fromCallable(...).subscribeOn(boundedElastic)`.
+- Chamada ao gateway reativo (`model.call(prompt) → Mono<ImageResponse>`).
+- `latency_ms` reflete apenas o tempo da chamada à OpenAI (envio do request até o `image_generation.completed`).
+- Custo: `ImageCostCalculator.costUsd(model, quality, size) × UsdBrlProvider.currentRate()`.
+- Nenhum caminho lança: falhas viram `GenerateResult.Err`.
 
-Run: `make test`
-Expected: FAIL — `ImageEditService` em `imageedit` não existe.
+**Critérios de aceite (testes):**
+- Sucesso retorna `Ok` com b64 e custo calculado.
+- apiKey ausente → `Err` com mensagem começando com "OPENAI_API_KEY".
+- Pedra não encontrada → `Err` com "stone image not found".
+- Imagem indecodificável → `Err` com "unable to decode".
+- Falha do gateway → `Err` com a mensagem da exceção.
 
-- [ ] **Step 3: Write minimal implementation**
+**Notas de design:**
+- Não bloqueie o event loop com `.block()` dentro do Mono (exceto onde estritamente necessário para custo, e com fallback).
+- O `GenerateResult.Ok` pode precisar carregar o custo além do que carrega hoje. Decida se estende o record ou cria um novo valor de domínio.
 
-```java
-package com.marmore.api.imageedit.service;
-
-import com.marmore.api.imageedit.ai.AiImageException;
-import com.marmore.api.imageedit.ai.AiImageOptions;
-import com.marmore.api.imageedit.ai.ImageEditModel;
-import com.marmore.api.imageedit.ai.ImageEditPrompt;
-import com.marmore.api.imageedit.ai.ImageResponse;
-import com.marmore.api.imageedit.ai.InputImage;
-import com.marmore.api.imageedit.config.ImageEditProperties;
-import com.marmore.api.imageedit.cost.ImageCostCalculator;
-import com.marmore.api.imageedit.cost.UsdBrlProvider;
-import com.marmore.api.imageedit.domain.EditPrompts;
-import com.marmore.api.imageedit.domain.GenerateResult;
-import java.math.BigDecimal;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.Optional;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.Resource;
-import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
-
-/**
- * Servico de edicao de imagem reativo. Orquestra validacoes pre-rede, resize (bloqueante em
- * boundedElastic), chamada ao gateway reativo e calculo de custo. Nenhum caminho lanca: falhas
- * viram {@link GenerateResult.Err}.
- */
-@Service
-public class ImageEditService {
-
-  private final ImageEditProperties props;
-  private final ImageResizer resizer;
-  private final ImageEditModel model;
-  private final ImageCostCalculator calculator;
-  private final UsdBrlProvider usdBrl;
-
-  /**
-   * Construtor.
-   *
-   * @param props propriedades do modulo
-   * @param resizer redimensionador de imagem em memoria
-   * @param model gateway de edicao reativo
-   * @param calculator calculadora de custo em USD
-   * @param usdBrl provedor de cambio USD->BRL
-   */
-  public ImageEditService(
-      ImageEditProperties props,
-      ImageResizer resizer,
-      ImageEditModel model,
-      ImageCostCalculator calculator,
-      UsdBrlProvider usdBrl) {
-    this.props = props;
-    this.resizer = resizer;
-    this.model = model;
-    this.calculator = calculator;
-    this.usdBrl = usdBrl;
-  }
-
-  /**
-   * Gera/edita imagem a partir dos bytes do ambiente.
-   *
-   * @param ambiente bytes da foto do ambiente
-   * @return sucesso ou erro, nunca lanca
-   */
-  public Mono<GenerateResult> generate(byte[] ambiente) {
-    long start = System.nanoTime();
-    if (props.getApiKey() == null || props.getApiKey().isBlank()) {
-      return Mono.just(new GenerateResult.Err("OPENAI_API_KEY ausente. Defina no ambiente.", ms(start)));
-    }
-    Resource pedra = new FileSystemResource(props.getStonePath());
-    if (!pedra.exists()) {
-      return Mono.just(new GenerateResult.Err("stone image not found: " + props.getStonePath(), ms(start)));
-    }
-    return Mono.fromCallable(() -> preparaAmbiente(ambiente, pedra))
-        .subscribeOn(Schedulers.boundedElastic())
-        .flatMap(preparado -> geraSeValido(preparado, start));
-  }
-
-  private Preparado preparaAmbiente(byte[] ambiente, Resource pedra) throws Exception {
-    Optional<byte[]> reduzido = resizer.resize(ambiente);
-    if (reduzido.isEmpty()) {
-      return Preparado.erro("unable to decode input image");
-    }
-    byte[] pedraBytes = pedra.getContentAsByteArray();
-    return Preparado.ok(reduzido.get(), pedraBytes);
-  }
-
-  private Mono<GenerateResult> geraSeValido(Preparado preparado, long start) {
-    if (preparado.erro != null) {
-      return Mono.just(new GenerateResult.Err(preparado.erro, ms(start)));
-    }
-    ImageEditPrompt prompt =
-        ImageEditPrompt.of(
-            EditPrompts.COUNTERTOP,
-            AiImageOptions.defaults(),
-            List.of(
-                InputImage.of(preparado.ambienteReduzido, "ambiente.jpg"),
-                InputImage.of(preparado.pedraBytes, nomeDoArquivoDaPedra())));
-    long callStart = System.nanoTime();
-    return model
-        .call(prompt)
-        .map(resp -> montaResultado(resp, callStart))
-        .onErrorResume(e -> Mono.just(toErr(e, start)));
-  }
-
-  private GenerateResult montaResultado(ImageResponse resp, long callStart) {
-    if (resp.getResult() == null || resp.getResult().output().b64Json() == null) {
-      return new GenerateResult.Err("resposta sem b64_json", ms(callStart));
-    }
-    AiImageOptions opts = AiImageOptions.defaults();
-    BigDecimal costUsd =
-        calculator.costUsd(opts.model(), opts.quality(), opts.size()).orElse(BigDecimal.ZERO);
-    return usdBrl
-        .currentRate()
-        .map(rate -> costUsd.multiply(rate))
-        .map(
-            costBrl -> {
-              String b64 = resp.getResult().output().b64Json();
-              return (GenerateResult)
-                  new GenerateResult.Ok(b64, resp.raw(), resp.metadata().usage(), ms(callStart));
-            })
-        // custo e enrich; nao bloqueia o resultado por isso
-        .defaultIfEmpty(
-            new GenerateResult.Ok(
-                resp.getResult().output().b64Json(),
-                resp.raw(),
-                resp.metadata().usage(),
-                ms(callStart)))
-        .block();
-  }
-
-  private static GenerateResult.Err toErr(Throwable e, long start) {
-    String msg =
-        e instanceof AiImageException aie
-            ? aie.getMessage()
-            : e.getClass().getSimpleName() + ": " + e.getMessage();
-    return new GenerateResult.Err(msg, ms(start));
-  }
-
-  /** Extrai o nome do arquivo da pedra do path configurado. */
-  private String nomeDoArquivoDaPedra() {
-    Path fileName = props.getStonePath().getFileName();
-    return fileName != null ? fileName.toString() : "pedra.png";
-  }
-
-  private static long ms(long start) {
-    return (System.nanoTime() - start) / 1_000_000;
-  }
-
-  private static final class Preparado {
-    final byte[] ambienteReduzido;
-    final byte[] pedraBytes;
-    final String erro;
-
-    private Preparado(byte[] ambienteReduzido, byte[] pedraBytes, String erro) {
-      this.ambienteReduzido = ambienteReduzido;
-      this.pedraBytes = pedraBytes;
-      this.erro = erro;
-    }
-
-    static Preparado ok(byte[] ambienteReduzido, byte[] pedraBytes) {
-      return new Preparado(ambienteReduzido, pedraBytes, null);
-    }
-
-    static Preparado erro(String msg) {
-      return new Preparado(null, null, msg);
-    }
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Remove o service velho e commit**
-
-```bash
-git rm src/main/java/com/marmore/api/image/service/ImageEditService.java
-git rm src/test/java/com/marmore/api/image/service/ImageEditServiceTest.java
-git add -A
-git commit -m "feat(service): ImageEditService reativo com calculo de custo BRL"
-```
+- [ ] **Step 1:** Escreva os testes de comportamento (sucesso, apiKey ausente, pedra ausente, decode falhou, gateway falhou).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente. Componha os Monos.
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Remova o service velho.
+- [ ] **Step 6:** Commit: `feat(service): ImageEditService reativo com calculo de custo BRL`
 
 ---
 
 ## Task 12: `ImageEditHandler` + `ImageEditRouter`
 
-O handler monta o `Flux<ServerSentEvent>` com a sequência completa: status (3 fases) + merger de ping + done/imagem (ou error). O router expõe `POST /images/edit`.
+**Problema:** Montar o `Flux<ServerSentEvent>` com a sequência completa do PlantUML: status (recebido → redimensionando → gerando) + heartbeat (ping a cada 15s) + done/imagem (ou error). Expor via `POST /images/edit`.
+
+**Responsabilidade do handler:** orquestrar a sequência de eventos. Responsabilidade do router:** mapear a rota.
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/imageedit/web/ImageEditHandler.java`
 - Create: `src/main/java/com/marmore/api/imageedit/web/ImageEditRouter.java`
 - Test: `src/test/java/com/marmore/api/imageedit/web/ImageEditHandlerTest.java`
 
-**Interfaces:**
-- Consumes: `ImageEditService`, `SseEvents`.
-- Produces: `Mono<ServerResponse>` via `edit(ServerRequest)`.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
+```
+// Handler
+ImageEditHandler(ImageEditService service, SseEvents events)
+Mono<ServerResponse> edit(ServerRequest request)
 
-```java
-package com.marmore.api.imageedit.web;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
-import com.marmore.api.imageedit.domain.GenerateResult;
-import com.marmore.api.imageedit.service.ImageEditService;
-import java.util.Map;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
-import org.springframework.mock.web.server.MockServerWebExchange;
-import org.springframework.web.reactive.function.server.HandlerStrategies;
-import org.springframework.web.reactive.function.server.RouterFunctions;
-import org.springframework.web.reactive.function.server.ServerRequest;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
-
-class ImageEditHandlerTest {
-
-  private ImageEditService service;
-  private SseEvents events;
-  private ImageEditHandler handler;
-
-  @BeforeEach
-  void setUp() {
-    service = mock(ImageEditService.class);
-    events = new SseEvents(new tools.jackson.databind.ObjectMapper());
-    handler = new ImageEditHandler(service, events);
-  }
-
-  @Test
-  void streamEmiteSequenciaStatusDoneImagem() {
-    when(service.generate(any()))
-        .thenReturn(
-            Mono.just(
-                new GenerateResult.Ok(
-                    "aGk=",
-                    null,
-                    null,
-                    100L)));
-    // Simula um ServerRequest com FilePart (simplificado: mock direto de bytes)
-    ServerRequest request = mock(ServerRequest.class);
-    when(request.multipartData())
-        .thenReturn(
-            Mono.just(
-                new org.springframework.util.LinkedMultiValueMap<>(
-                    Map.of(
-                        "image",
-                        java.util.List.of(
-                            mockPart(new byte[] {1}))))));
-
-    StepVerifier.create(handler.streamFlux(request))
-        .expectNextMatches(ev -> "status".equals(ev.event()) && ((String) ev.data()).contains("recebido"))
-        .expectNextMatches(ev -> "status".equals(ev.event()) && ((String) ev.data()).contains("redimensionando"))
-        .expectNextMatches(ev -> "status".equals(ev.event()) && ((String) ev.data()).contains("gerando"))
-        .expectNextMatches(ev -> "done".equals(ev.event()))
-        .expectNextMatches(ev -> "imagem".equals(ev.event()) && "aGk=".equals(ev.data()))
-        .verifyComplete();
-  }
-
-  @Test
-  void streamEmiteErrorEmFalhaDeDominio() {
-    when(service.generate(any()))
-        .thenReturn(Mono.just(new GenerateResult.Err("OPENAI_API_KEY ausente", 10L)));
-    ServerRequest request = mock(ServerRequest.class);
-    when(request.multipartData())
-        .thenReturn(
-            Mono.just(
-                new org.springframework.util.LinkedMultiValueMap<>(
-                    Map.of("image", java.util.List.of(mockPart(new byte[] {1}))))));
-
-    StepVerifier.create(handler.streamFlux(request))
-        .expectNextMatches(ev -> "status".equals(ev.event()))
-        .expectNextMatches(ev -> "status".equals(ev.event()))
-        .expectNextMatches(ev -> "status".equals(ev.event()))
-        .expectNextMatches(ev -> "error".equals(ev.event()))
-        .verifyComplete();
-  }
-
-  private static org.springframework.http.codec.multipart.FilePart mockPart(byte[] bytes) {
-    org.springframework.http.codec.multipart.FilePart part =
-        mock(org.springframework.http.codec.multipart.FilePart.class);
-    when(part.transferTo(any(java.io.File.class)))
-        .thenReturn(Mono.empty());
-    when(part.content())
-        .thenReturn(
-            Flux.just(
-                org.springframework.core.io.buffer.DefaultDataBufferFactory.sharedInstance.wrap(bytes)));
-    when(part.filename()).thenReturn("ambiente.jpg");
-    return part;
-  }
-}
+// Router
+@Bean RouterFunction<ServerResponse> imageEditRoute(ImageEditHandler handler)
+// rota: POST /images/edit, consumes MULTIPART_FORM_DATA, accept TEXT_EVENT_STREAM
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+**Regras de domínio:**
+- Lê o `FilePart` "image" do multipart, converte para bytes.
+- Emite `status recebido` → `status redimensionando` → `status gerando`.
+- Enquanto a geração não completa, emite `ping` a cada 15s.
+- Ao completar: `done` + `imagem` (se Ok) ou `error` (se Err).
+- Fecha o stream após o resultado.
+- O heartbeat para quando o resultado chega (não continua emitindo ping após done/imagem).
 
-Run: `make test`
-Expected: FAIL — `ImageEditHandler` não existe.
+**Critérios de aceite (testes):**
+- Stream com sucesso emite a sequência: status×3 → done → imagem.
+- Stream com erro de domínio emite: status×3 → error.
+- O ping só é emitido se a geração demorar (use `StepVerifier.withVirtualTime` para avançar o relógio sem esperar 15s reais).
 
-- [ ] **Step 3: Write minimal implementation (handler)**
+**Notas de design (pense na composição reativa):**
+- Como fundir o heartbeat com o resultado? O `Flux.interval(15s)` precisa ser cancelado quando o `Mono` do service completa. Pense em `Flux.merge` com `takeUntil`, ou `Mono.delayUntil`, ou outro operador. A escolha é sua; o teste valida o comportamento.
+- A leitura dos bytes do `FilePart` é reativa (`DataBufferUtils.join` + liberação do buffer).
 
-```java
-package com.marmore.api.imageedit.web;
-
-import com.marmore.api.imageedit.domain.GenerateResult;
-import com.marmore.api.imageedit.service.ImageEditService;
-import java.io.File;
-import java.nio.file.Files;
-import org.springframework.core.io.buffer.DataBufferUtils;
-import org.springframework.http.MediaType;
-import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.http.codec.multipart.FilePart;
-import org.springframework.http.codec.multipart.Part;
-import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.server.ServerRequest;
-import org.springframework.web.reactive.function.server.ServerResponse;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-
-/**
- * Handler reativo para o stream SSE de edicao de imagem. Monta a sequencia de eventos: status
- * (recebido, redimensionando, gerando), merger de heartbeat (ping a cada 15s) com a geracao, e
- * finally done+imagem ou error.
- */
-@Component
-public class ImageEditHandler {
-
-  private static final long PING_INTERVAL_SECONDS = 15L;
-
-  private final ImageEditService service;
-  private final SseEvents events;
-
-  /**
-   * Construtor.
-   *
-   * @param service servico de edicao reativo
-   * @param events fabrica de eventos SSE
-   */
-  public ImageEditHandler(ImageEditService service, SseEvents events) {
-    this.service = service;
-    this.events = events;
-  }
-
-  /**
-   * Entry point do endpoint. Le o FilePart, monta o Flux de eventos SSE, envelopa em ServerResponse.
-   *
-   * @param request request reativo
-   * @return ServerResponse com body SSE
-   */
-  public Mono<ServerResponse> edit(ServerRequest request) {
-    return request
-        .multipartData()
-        .flatMap(
-            map -> {
-              Part part = map.toSingleValueMap().get("image");
-              if (!(part instanceof FilePart filePart)) {
-                return Mono.<ServerSentEvent<Object>>empty().flatMap(
-                    ev ->
-                        ServerResponse.badRequest()
-                            .bodyValue("{\"error\":\"campo image ausente\"}"));
-              }
-              return ServerResponse.ok()
-                  .contentType(MediaType.TEXT_EVENT_STREAM)
-                  .body(streamFlux(request), ServerSentEvent.class);
-            });
-  }
-
-  /**
-   * Flux de eventos SSE. Exposto como package-private para teste.
-   */
-  Flux<ServerSentEvent<Object>> streamFlux(ServerRequest request) {
-    return request
-        .multipartData()
-        .flatMapMany(
-            map -> {
-              FilePart filePart = (FilePart) map.toSingleValueMap().get("image");
-              return lerBytes(filePart).flatMapMany(this::sequencia);
-            });
-  }
-
-  private Flux<ServerSentEvent<Object>> sequencia(byte[] bytes) {
-    Flux<ServerSentEvent<Object>> statusInicial =
-        Flux.just(
-            events.status("recebido"),
-            events.status("redimensionando"),
-            events.status("gerando"));
-    Flux<ServerSentEvent<Object>> heartbeat =
-        Flux.interval(java.time.Duration.ofSeconds(PING_INTERVAL_SECONDS))
-            .map(i -> events.ping());
-    Flux<ServerSentEvent<Object>> resultado =
-        service
-            .generate(bytes)
-            .flatMapMany(this::eventosDeResultado)
-            // volta para o event loop apos o boundedElastic do service
-            .publishOn(reactor.core.scheduler.Schedulers.immediate());
-    return statusInicial.concatWith(heartbeat.mergeWith(resultado).takeUntil(isResultado()));
-  }
-
-  private Flux<ServerSentEvent<Object>> eventosDeResultado(GenerateResult r) {
-    if (r instanceof GenerateResult.Ok ok) {
-      return Flux.just(events.done(ok.latencyMs(), null, ok.usage()), events.imagem(ok.b64()));
-    }
-    GenerateResult.Err err = (GenerateResult.Err) r;
-    return Flux.just(events.error(err.error(), err.latencyMs()));
-  }
-
-  private static java.util.function.Predicate<ServerSentEvent<Object>> isResultado() {
-    return ev -> "done".equals(ev.event()) || "error".equals(ev.event());
-  }
-
-  private static Mono<byte[]> lerBytes(FilePart filePart) {
-    return DataBufferUtils.join(filePart.content())
-        .map(db -> {
-          byte[] bytes = new byte[db.readableByteCount()];
-          db.read(bytes);
-          DataBufferUtils.release(db);
-          return bytes;
-        });
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS. Se o `takeUntil` cortar o heartbeat antes do resultado, ajuste o merger: use `Flux.merge(heartbeat.takeUntilOther(resultado), resultado)` como alternativa. O teste valida a sequência.
-
-- [ ] **Step 5: Write the router**
-
-```java
-package com.marmore.api.imageedit.web;
-
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.http.MediaType;
-import org.springframework.web.reactive.function.server.RouterFunction;
-import org.springframework.web.reactive.function.server.RouterFunctions;
-import org.springframework.web.reactive.function.server.ServerResponse;
-
-import static org.springframework.web.reactive.function.server.RequestPredicates.POST;
-import static org.springframework.web.reactive.function.server.RequestPredicates.accept;
-import static org.springframework.web.reactive.function.server.RequestPredicates.contentType;
-
-/**
- * Rota POST /images/edit para o handler SSE. Aceita multipart e produz text/event-stream.
- */
-@Configuration
-public class ImageEditRouter {
-
-  /**
-   * Bean da RouterFunction.
-   *
-   * @param handler handler de edicao
-   * @return rota configurada
-   */
-  @Bean
-  public RouterFunction<ServerResponse> imageEditRoute(ImageEditHandler handler) {
-    return RouterFunctions.route(
-        POST("/images/edit")
-            .and(contentType(MediaType.MULTIPART_FORM_DATA))
-            .and(accept(MediaType.TEXT_EVENT_STREAM)),
-        handler::edit);
-  }
-}
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/main/java/com/marmore/api/imageedit/web/ImageEditHandler.java \
-        src/main/java/com/marmore/api/imageedit/web/ImageEditRouter.java \
-        src/test/java/com/marmore/api/imageedit/web/ImageEditHandlerTest.java
-git commit -m "feat(web): handler e router SSE para /images/edit"
-```
+- [ ] **Step 1:** Escreva os testes de comportamento (sequência de sucesso, sequência de erro, heartbeat com virtual time).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente o handler. Pense no merger heartbeat↔resultado.
+- [ ] **Step 4:** Implemente o router.
+- [ ] **Step 5:** Rode `make test`, confirme PASS.
+- [ ] **Step 6:** Commit: `feat(web): handler e router SSE para /images/edit`
 
 ---
 
 ## Task 13: Remove o controller MVC velho
 
-O controller síncrono (`ImageEditController`) não tem mais lugar. Remova.
+**Problema:** O controller síncrono (`ImageEditController`, `@RestController`) não tem mais lugar. O SSE o substituiu.
 
 **Files:**
-- Remove: `src/main/java/com/marmore/api/image/web/ImageEditController.java`
-- Remove: `src/test/java/com/marmore/api/image/web/ImageEditControllerTest.java`
-- Remove: `src/test/java/com/marmore/api/image/web/ImageUploadSizeTest.java`
+- Remove: `image/web/ImageEditController.java` + testes (`ImageEditControllerTest`, `ImageUploadSizeTest`).
 
-- [ ] **Step 1: Remove**
-
-```bash
-git rm src/main/java/com/marmore/api/image/web/ImageEditController.java
-git rm src/test/java/com/marmore/api/image/web/ImageEditControllerTest.java
-git rm src/test/java/com/marmore/api/image/web/ImageUploadSizeTest.java
-```
-
-- [ ] **Step 2: Verifique que o pacote velho está vazio**
-
-```bash
-find src -path "*/image/web*" -name "*.java"
-find src -path "*/com/marmore/api/image/*" -name "*.java"
-```
-
-Se ainda houver arquivos em `com/marmore/api/image/` (não `imageedit`), eles são órfãos que deveriam ter sido migrados. Volte à Task 7 e mova-os. Se `com/marmore/api/image/` está vazio, remova o diretório.
-
-- [ ] **Step 3: Compile**
-
-Run: `make test`
-Expected: PASS. Pode haver erros porque o `pom.xml` ainda tem `spring-boot-starter-webmvc`. Esses são resolvidos na Task 15.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add -A
-git commit -m "refactor(web): remove controller MVC sincrono /images/edit"
-```
+- [ ] **Step 1:** `git rm` os arquivos.
+- [ ] **Step 2:** Verifique que `com/marmore/api/image/` está vazio (todos migrados ou removidos).
+- [ ] **Step 3:** Rode `make test`, confirme PASS (pode haver erros de compilação por `spring-boot-starter-webmvc` ainda presente — resolvidos na Task 16).
+- [ ] **Step 4:** Commit: `refactor(web): remove controller MVC sincrono /images/edit`
 
 ---
 
 ## Task 14: Segurança reativa (`ApiKeyAuthWebFilter` + `SecurityConfiguration`)
 
-Migra a autenticação de servlet para reativo. Novo `WebFilter` integrado à `SecurityWebFilterChain`.
+**Problema:** A autenticação hoje é servlet (`OncePerRequestFilter`). Precisa virar reativa (`WebFilter` integrado à `SecurityWebFilterChain`).
 
 **Files:**
 - Create: `src/main/java/com/marmore/api/security/ApiKeyAuthWebFilter.java`
 - Modify: `src/main/java/com/marmore/api/security/SecurityConfiguration.java`
 - Create: `src/test/java/com/marmore/api/security/ApiKeyAuthWebFilterTest.java`
-- Modify: `src/test/java/com/marmore/api/security/SecurityConfigurationTest.java`
-- Remove: `src/main/java/com/marmore/api/security/ApiKeyAuthFilter.java`
-- Remove: `src/test/java/com/marmore/api/security/ApiKeyAuthFilterTest.java`
+- Remove: `ApiKeyAuthFilter.java` + teste.
 
-**Interfaces:**
-- Consumes: `ApiKeyProperties`.
-- Produces: `WebFilter` que valida `X-API-Key` e rejeita com 401.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.security;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpHeaders;
-import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
-import org.springframework.mock.web.server.MockServerWebExchange;
-import org.springframework.web.server.handler.FilteringWebHandler;
-
-class ApiKeyAuthWebFilterTest {
-
-  private static final String KEY_VALIDA = "marmore-local-dev-key-2026";
-
-  @Test
-  void keyValidaPermitePassagem() {
-    ApiKeyProperties props = new ApiKeyProperties();
-    props.setKey(KEY_VALIDA);
-    ApiKeyAuthWebFilter filter = new ApiKeyAuthWebFilter(props);
-    MockServerHttpRequest req =
-        MockServerHttpRequest.post("/images/edit").header("X-API-Key", KEY_VALIDA).build();
-    MockServerWebExchange exchange = MockServerWebExchange.from(req);
-    boolean[] passed = {false};
-    filter
-        .filter(exchange, w -> Mono.fromRunnable(() -> passed[0] = true))
-        .block();
-    assertThat(passed[0]).isTrue();
-  }
-
-  @Test
-  void keyAusenteRejeita401() {
-    ApiKeyProperties props = new ApiKeyProperties();
-    props.setKey(KEY_VALIDA);
-    ApiKeyAuthWebFilter filter = new ApiKeyAuthWebFilter(props);
-    MockServerHttpRequest req = MockServerHttpRequest.post("/images/edit").build();
-    MockServerWebExchange exchange = MockServerWebExchange.from(req);
-    filter.filter(exchange, w -> Mono.empty()).block();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.UNAUTHORIZED);
-  }
-
-  @Test
-  void keyInvalidaRejeita401() {
-    ApiKeyProperties props = new ApiKeyProperties();
-    props.setKey(KEY_VALIDA);
-    ApiKeyAuthWebFilter filter = new ApiKeyAuthWebFilter(props);
-    MockServerHttpRequest req =
-        MockServerHttpRequest.post("/images/edit").header("X-API-Key", "errada").build();
-    MockServerWebExchange exchange = MockServerWebExchange.from(req);
-    filter.filter(exchange, w -> Mono.empty()).block();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.UNAUTHORIZED);
-  }
-}
 ```
+// Filtro
+ApiKeyAuthWebFilter(ApiKeyProperties props)
+// implementa WebFilter; HEADER = "X-API-Key"
 
-> O teste usa `Mono` sem import explícito no escopo acima. Adicione `import reactor.core.publisher.Mono;` no topo do arquivo de teste.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `make test`
-Expected: FAIL — `ApiKeyAuthWebFilter` não existe.
-
-- [ ] **Step 3: Write minimal implementation (filter)**
-
-```java
-package com.marmore.api.security;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.ReactiveSecurityContextHolder;
-import org.springframework.stereotype.Component;
-import org.springframework.web.server.ServerWebExchange;
-import org.springframework.web.server.WebFilter;
-import org.springframework.web.server.WebFilterChain;
-import reactor.core.publisher.Mono;
-
-/**
- * Filtro de autenticacao por API key no header {@value #HEADER}. Compara a chave fornecida com a
- * configurada via {@link MessageDigest#isEqual} (comparacao constante no tempo). Chave valida
- * autentica o request e continua a chain; ausente ou invalida responde 401 JSON.
- */
-@Component
-public class ApiKeyAuthWebFilter implements WebFilter {
-
-  /** Nome do header HTTP que carrega a API key. */
-  public static final String HEADER = "X-API-Key";
-
-  private final ApiKeyProperties props;
-
-  /**
-   * Construtor.
-   *
-   * @param props propriedades com a chave esperada
-   */
-  public ApiKeyAuthWebFilter(ApiKeyProperties props) {
-    this.props = props;
-  }
-
-  @Override
-  public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String provided = exchange.getRequest().getHeaders().getFirst(HEADER);
-    String expected = props.getKey();
-    if (provided != null
-        && expected != null
-        && MessageDigest.isEqual(
-            provided.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8))) {
-      return chain
-          .filter(exchange)
-          .contextWrite(
-              ReactiveSecurityContextHolder.withAuthentication(
-                  UsernamePasswordAuthenticationToken.authenticated("apikey", null, java.util.List.of())));
-    }
-    return rejeitar(exchange);
-  }
-
-  private static Mono<Void> rejeitar(ServerWebExchange exchange) {
-    exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-    exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-    byte[] body = "{\"error\":\"API key ausente ou invalida\"}".getBytes(StandardCharsets.UTF_8);
-    return exchange.getResponse().writeWith(
-        Mono.just(exchange.getResponse().bufferFactory().wrap(body)));
-  }
-}
-```
-
-- [ ] **Step 4: Rewrite SecurityConfiguration (reativo)**
-
-```java
-package com.marmore.api.security;
-
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
-import org.springframework.security.config.web.server.SecurityWebFilterChain;
-import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.web.server.SecurityWebServerFilters;
-import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository;
-
-/**
- * Configuracao de seguranca reativa. Autenticacao stateless por API key no header X-API-Key (filtro
- * {@link ApiKeyAuthWebFilter}). CSRF desabilitado (API stateless por header, sem cookies de sessao).
- */
-@Configuration
+// SecurityConfig (reativo)
 @EnableWebFluxSecurity
-public class SecurityConfiguration {
-
-  /**
-   * Cadeia de filtros de seguranca reativa.
-   *
-   * @param http builder do Spring Security reativo (ServerHttpSecurity)
-   * @param apiKeyFilter filtro de autenticacao por API key
-   * @return cadeia configurada
-   */
-  @Bean
-  public SecurityWebFilterChain filterChain(ServerHttpSecurity http, ApiKeyAuthWebFilter apiKeyFilter) {
-    return http
-        .csrf(ServerHttpSecurity.CsrfSpec::disable)
-        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
-        .authorizeExchange(a -> a.anyExchange().authenticated())
-        .addFilterAt(apiKeyFilter, SecurityWebServerFilters.AUTHENTICATION)
-        .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
-        .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
-        .build();
-  }
-}
+@Bean SecurityWebFilterChain filterChain(ServerHttpSecurity http, ApiKeyAuthWebFilter apiKeyFilter)
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+**Regras de domínio:**
+- Compara a chave do header com a configurada via `MessageDigest.isEqual` (comparação constante, anti-timing). Mesma lógica do filtro atual.
+- Chave válida → autentica e continua a chain.
+- Ausente/inválida → 401 com body JSON `{"error":"API key ausente ou invalida"}`.
+- CSRF desabilitado, stateless (`NoOpServerSecurityContextRepository`), basic/form desabilitados.
 
-Run: `make test`
-Expected: PASS
+**Critérios de aceite (testes):**
+- Key válida → request passa (chain continua).
+- Key ausente → 401.
+- Key inválida → 401.
 
-- [ ] **Step 6: Remove o filtro velho e commit**
-
-```bash
-git rm src/main/java/com/marmore/api/security/ApiKeyAuthFilter.java
-git rm src/test/java/com/marmore/api/security/ApiKeyAuthFilterTest.java
-git add -A
-git commit -m "feat(security): autenticacao X-API-Key reativa (WebFilter + SecurityWebFilterChain)"
-```
+- [ ] **Step 1:** Escreva os testes do filtro (válido, ausente, inválido).
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente o `WebFilter`.
+- [ ] **Step 4:** Reescreva o `SecurityConfiguration` para reativo (`ServerHttpSecurity`, `@EnableWebFluxSecurity`).
+- [ ] **Step 5:** Rode `make test`, confirme PASS.
+- [ ] **Step 6:** Remova `ApiKeyAuthFilter` + teste.
+- [ ] **Step 7:** Commit: `feat(security): autenticacao X-API-Key reativa`
 
 ---
 
 ## Task 15: Exception handler reativo
 
-Substitui o `@RestControllerAdvice` (servlet) por `WebExceptionHandler` (reativo).
+**Problema:** O `@RestControllerAdvice` (servlet) não funciona no WebFlux. Precisa de um `WebExceptionHandler` reativo.
 
 **Files:**
-- Create: `src/main/java/com/marmore/api/web/GlobalWebExceptionHandler.java`
-- Remove: o velho `GlobalExceptionHandler.java` (sobrescreve)
+- Create (sobrescreve): `src/main/java/com/marmore/api/web/GlobalWebExceptionHandler.java`
 - Create: `src/test/java/com/marmore/api/web/GlobalWebExceptionHandlerTest.java`
 
-**Interfaces:**
-- Consumes: nada (pega exceções globais).
-- Produces: `WebExceptionHandler` que mapeia `ImageEditException` (status do ex) e fallback 500.
+**API pública esperada:**
 
-- [ ] **Step 1: Write the failing test**
-
-```java
-package com.marmore.api.web;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import com.marmore.api.imageedit.web.ImageEditException;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
-import org.springframework.mock.web.server.MockServerWebExchange;
-import reactor.core.publisher.Mono;
-
-class GlobalWebExceptionHandlerTest {
-
-  @Test
-  void imageEditExceptionRespondeStatusSemantico() {
-    GlobalWebExceptionHandler handler = new GlobalWebExceptionHandler();
-    MockServerWebExchange exchange =
-        MockServerWebExchange.from(MockServerHttpRequest.post("/images/edit").build());
-    ImageEditException ex = new ImageEditException(HttpStatus.SERVICE_UNAVAILABLE, "sem key");
-    handler.handle(ex, exchange).block();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-  }
-}
+```
+@Component @Order(-2)
+class GlobalWebExceptionHandler implements WebExceptionHandler
+Mono<Void> handle(ServerWebExchange exchange, Throwable ex)
 ```
 
-> Adicione `import org.springframework.core.Ordered;` e `import org.springframework.core.annotation.Order;` se usar ordem. E `import org.springframework.web.server.WebExceptionHandler;`.
+**Regras de domínio:**
+- `ImageEditException` → responde com o status embutido na exceção.
+- `ResponseStatusException` (do Spring) → responde com o status da exceção.
+- Outras exceções → 500 com mensagem genérica.
 
-- [ ] **Step 2: Run test to verify it fails**
+**Critérios de aceite (testes):**
+- `ImageEditException` com status 503 → resposta 503.
+- Exceção genérica → 500.
 
-Run: `make test`
-Expected: FAIL — versão reativa não existe.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```java
-package com.marmore.api.web;
-
-import com.marmore.api.imageedit.web.ImageEditException;
-import org.springframework.core.annotation.Order;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
-import org.springframework.web.server.WebExceptionHandler;
-import org.springframework.web.server.handler.ResponseStatusExceptionHandler;
-import reactor.core.publisher.Mono;
-
-/**
- * Tratamento global de excecoes reativo. Garante que {@link ImageEditException} preserve seu status
- * semantico. Roda depois do {@link ResponseStatusExceptionHandler} do Spring.
- */
-@Component
-@Order(-2)
-public class GlobalWebExceptionHandler implements WebExceptionHandler {
-
-  @Override
-  public Mono<Void> handle(org.springframework.web.server.ServerWebExchange exchange, Throwable ex) {
-    if (ex instanceof ImageEditException iee) {
-      return escrever(exchange, iee.getStatus(), iee.getMessage());
-    }
-    if (ex instanceof ResponseStatusException rse) {
-      return escrever(exchange, (HttpStatus) rse.getStatusCode(), rse.getReason());
-    }
-    return escrever(exchange, HttpStatus.INTERNAL_SERVER_ERROR, "erro interno");
-  }
-
-  private static Mono<Void> escrever(
-      org.springframework.web.server.ServerWebExchange exchange, HttpStatus status, String msg) {
-    exchange.getResponse().setStatusCode(status);
-    exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
-    String safe = msg == null ? status.getReasonPhrase() : msg.replace("\"", "'");
-    byte[] body = ("{\"error\":\"" + safe + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    return exchange.getResponse().writeWith(
-        Mono.just(exchange.getResponse().bufferFactory().wrap(body)));
-  }
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `make test`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git rm src/main/java/com/marmore/api/web/GlobalExceptionHandler.java 2>/dev/null || true
-git add -A
-git commit -m "feat(web): exception handler reativo"
-```
+- [ ] **Step 1:** Escreva o teste.
+- [ ] **Step 2:** Rode `make test`, confirme FAIL.
+- [ ] **Step 3:** Implemente.
+- [ ] **Step 4:** Rode `make test`, confirme PASS.
+- [ ] **Step 5:** Commit: `feat(web): exception handler reativo`
 
 ---
 
 ## Task 16: Migração de stack — `pom.xml`
 
-Remove as dependências servlet (`webmvc`, `restclient` + test starters). Confirma que só ficam `webflux` e `webclient`.
+**Problema:** O `pom.xml` hoje tem `webmvc` + `webflux` + `restclient` + `webclient` coexistindo. Para o WebFlux puro, remova `webmvc` e `restclient` (+ test starters).
 
-**Files:**
-- Modify: `src/` (pom.xml)
+**Files:** `pom.xml`
 
-- [ ] **Step 1: Edite pom.xml**
-
-Remova estas linhas de `<dependencies>`:
-
-```xml
-<dependency>
-  <groupId>org.springframework.boot</groupId>
-  <artifactId>spring-boot-starter-restclient</artifactId>
-</dependency>
-<dependency>
-  <groupId>org.springframework.boot</groupId>
-  <artifactId>spring-boot-starter-webmvc</artifactId>
-</dependency>
-<dependency>
-  <groupId>org.springframework.boot</groupId>
-  <artifactId>spring-boot-starter-restclient-test</artifactId>
-  <scope>test</scope>
-</dependency>
-<dependency>
-  <groupId>org.springframework.boot</groupId>
-  <artifactId>spring-boot-starter-webmvc-test</artifactId>
-  <scope>test</scope>
-</dependency>
-```
-
-Mantenha: `webflux`, `webclient`, `webclient-test`, `webflux-test`, `security`, `security-test`, `thumbnailator`, `spring-ai-starter-model-openai`, `data-jpa`/`jdbc` + test, `postgresql`, `h2`, `reactor-test` (adicionado na Task 4 via MockWebServer ou explicitamente), `mockwebserver`.
-
-Adicione explicitamente (se ainda não estiver):
-
-```xml
-<dependency>
-  <groupId>io.projectreactor</groupId>
-  <artifactId>reactor-test</artifactId>
-  <scope>test</scope>
-</dependency>
-```
-
-- [ ] **Step 2: Reinstale e rode testes**
-
-Run: `make test`
-Expected: PASS. Se houver auto-config conflitando (dois servers), verifique `application.yaml`: o WebFlux puro não precisa de `spring.servlet.multipart` (config do servlet). A Task 17 trata disso.
-
-- [ ] [ ] **Step 3: Commit**
-
-```bash
-git add pom.xml
-git config advice.detachedHead false
-git commit -m "chore(build): remove spring-boot-starter-webmvc e restclient; full webflux"
-```
+- [ ] **Step 1:** Remova `spring-boot-starter-webmvc`, `spring-boot-starter-restclient`, `spring-boot-starter-webmvc-test`, `spring-boot-starter-restclient-test`. Mantenha `webflux`, `webclient`, `security`, `data-jpa`, `jdbc`, `thumbnailator`, `spring-ai-starter-model-openai`, `postgresql`, `h2`. Adicione `io.projectreactor:reactor-test` (test scope) se ainda não estiver.
+- [ ] **Step 2:** Rode `make test`, confirme PASS.
+- [ ] **Step 3:** Commit: `chore(build): remove webmvc e restclient; full webflux`
 
 ---
 
-## Task 17: `application.yaml` + `ApiApplication` registry
+## Task 17: `application.yaml` + `ApiApplication`
 
-Adiciona config de custo/câmbio, remove config de multipart servlet, registra `UsdBrlProperties` no `@EnableConfigurationProperties`.
+**Problema:** Adicionar config de custo/câmbio, remover config de multipart servlet (inútil no WebFlux), registrar `UsdBrlProperties`.
 
-**Files:**
-- Modify: `src/main/resources/application.yaml`
-- Modify: `src/test/resources/application.yaml`
-- Modify: `src/main/java/com/marmore/api/ApiApplication.java`
+**Files:** `application.yaml` (main + test), `ApiApplication.java`.
 
-- [ ] **Step 1: Atualize application.yaml (main)**
+- [ ] **Step 1:** Em `application.yaml`, adicione sob `marmore`:
 
 ```yaml
-spring:
-  application:
-    name: api
-  ai:
-    openai:
-      api-key: ${OPENAI_API_KEY:}
-    model:
-      chat: none
-      embedding: none
-      image: none
-      audio:
-        speech: none
-        transcription: none
-      moderation: none
-  codec:                               # NOVO: limite in-memory do WebFlux (equivalente ao multipart do servlet)
-    max-in-memory-size: 25MB
-
-marmore:
-  api:
-    key: ${MARMORE_API_KEY:}
-  openai:
-    image:
-      base-url: https://api.openai.com
-      api-key: ${spring.ai.openai.api-key:}
-      default-model: gpt-image-2
-      timeout: 180s
-      stone-path: ${user.dir}/data/granito.png
-  cost:                                # NOVO
+  cost:
     usd-brl:
       url: https://economia.awesomeapi.com.br/json/last/USD-BRL
       cache-ttl: 6h
       fallback: 5.1075
 ```
 
-- [ ] **Step 2: Atualize test application.yaml**
+Troque `spring.servlet.multipart` por `spring.codec.max-in-memory-size: 25MB` (limite in-memory do WebFlux).
 
-Adicione o mesmo bloco `marmore.cost` no `src/test/resources/application.yaml` (para que `UsdBrlProperties` carregue nos testes de contexto).
-
-- [ ] `spring.servlet.multipart`**:** remova do `application.yaml` se ainda presente (config servlet, inútil no WebFlux).
-
-- [ ] **Step 3: Atualize ApiApplication**
-
-```java
-package com.marmore.api;
-
-import com.marmore.api.imageedit.config.ImageEditProperties;
-import com.marmore.api.imageedit.cost.UsdBrlProperties;
-import com.marmore.api.security.ApiKeyProperties;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-
-/**
- * Entry point da API Marmore.
- */
-@SpringBootApplication
-@EnableConfigurationProperties({ApiKeyProperties.class, ImageEditProperties.class, UsdBrlProperties.class})
-public class ApiApplication {
-
-  /**
-   * Main.
-   *
-   * @param args args de linha de comando
-   */
-  public static void main(String[] args) {
-    SpringApplication.run(ApiApplication.class, args);
-  }
-}
-```
-
-- [ ] **Step 4: Rode testes**
-
-Run: `make test`
-Expected: PASS. Se `SecurityConfigurationTest` falhar por causa do contexto reativo, atualize-o para usar `WebTestClient` em vez de `MockMvc` (verificar se já não foi feito na Task 14).
-
-- [ ] **Step 4b: Rode lint**
-
-Run: `make lint`
-Expected: PASS (0 Checkstyle violations, 0 Spotless changes).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/main/resources/application.yaml \
-        src/test/resources/application.yaml \
-        src/main/java/com/marmore/api/ApiApplication.java
-git commit -m "chore(config): adiciona marmore.cost e codec; registra UsdBrlProperties"
-```
+- [ ] **Step 2:** Atualize `ApiApplication` para registrar `UsdBrlProperties.class` no `@EnableConfigurationProperties`.
+- [ ] **Step 3:** Rode `make test`, confirme PASS.
+- [ ] **Step 4:** Rode `make lint`, confirme 0 violations.
+- [ ] **Step 5:** Commit: `chore(config): adiciona marmore.cost, codec, registra UsdBrlProperties`
 
 ---
 
-## Task 18: Bruno collection + docs
+## Task 18: Atualizar default de quality para `low`
 
-Atualiza o Bruno `.bru` existente para refletir o novo contrato SSE.
+**Problema:** `AiImageOptions.defaults()` hoje usa `quality=medium` (0.053 USD). Decisão do usuário: passar para `low` (0.006 USD), alinhado ao uso majoritário da rinha e ao objetivo de protótipo de baixo custo.
 
-**Files:**
-- Modify: `bruno/marmore-api/editar imagem.bru`
+**Files:** `imageedit/ai/AiImageOptions.java` (já migrado na Task 7).
 
-- [ ] **Step 1: Atualize o .bru**
-
-```bruno
-meta {
-  name: editar imagem
-  type: http
-  seq: 2
-}
-
-post {
-  url: {{base_url}}/images/edit
-  body: multipartForm
-  auth: inherit
-}
-
-headers {
-  X-API-Key: {{marmore_api_key}}
-  Accept: text/event-stream
-}
-
-body:multipart-form {
-  image: @file(assets/ambiente.jpg)
-}
-
-settings {
-  encodeUrl: true
-  timeout: 0
-}
-```
-
-A única mudança real: adicionar `Accept: text/event-stream` nos headers. O Bruno recebe o stream como resposta (não renderiza os eventos nativamente, mas registra a resposta).
-
-- [ ] **Step 2: Commit**
-
-```bash
-git add "bruno/marmore-api/editar imagem.bru"
-git commit -m "docs(bruno): atualiza request para SSE com Accept text/event-stream"
-```
+- [ ] **Step 1:** Atualize `defaults()` de `medium` para `low`.
+- [ ] **Step 2:** Atualize o teste existente de `AiImageOptionsTest` para refletir o novo default.
+- [ ] **Step 3:** Rode `make test`, confirme PASS.
+- [ ] **Step 4:** Commit: `feat(ai): quality default passa a ser low (alinhado a rinha)`
 
 ---
 
-## Task 19: Teste de integração do fluxo SSE completo
+## Task 19: Bruno collection
 
-Prova que o PlantUML foi implementado end-to-end. Sobe o contexto WebFlux, mocka o `WebClient` da OpenAI, envia multipart via `WebTestClient`, valida a sequência de eventos SSE via `StepVerifier`.
+**Problema:** O `.bru` existente não declara `Accept: text/event-stream`.
+
+**Files:** `bruno/marmore-api/editar imagem.bru`
+
+- [ ] **Step 1:** Adicione `Accept: text/event-stream` aos headers do `.bru`.
+- [ ] **Step 2:** Commit: `docs(bruno): request SSE com Accept text/event-stream`
+
+---
+
+## Task 20: Teste de integração do fluxo SSE completo
+
+**Problema:** Provar que o PlantUML foi implementado end-to-end. Sobe o contexto WebFlux, mocka o gateway da OpenAI, envia multipart via `WebTestClient`, valida a sequência de eventos SSE.
 
 **Files:**
 - Create: `src/test/java/com/marmore/api/imageedit/web/ImageEditSseIntegrationTest.java`
 
-**Interfaces:**
-- Consumes: tudo (contexto completo).
+**Critérios de aceite (testes):**
+- `POST /images/edit` com multipart + `X-API-Key` + `Accept: text/event-stream` retorna 200 SSE.
+- O stream emite a sequência: status (recebido/redimensionando/gerando) → done/imagem (ou error).
+- Sem `X-API-Key` → 401.
 
-- [ ] **Step 1: Write the test**
+**Notas de design:**
+- Use `WebTestClient` + `StepVerifier` sobre o body reativo.
+- Mocke o `ImageEditModel` (via `@TestConfiguration` + `@Primary`) para retornar um `ImageEditResponse` fixo.
+- Mocke o `UsdBrlProvider` para não chamar a AwesomeAPI real.
 
-```java
-package com.marmore.api.imageedit.web;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
-import com.marmore.api.imageedit.ai.ImageEditModel;
-import com.marmore.api.imageedit.ai.ImageResponse;
-import com.marmore.api.imageedit.ai.ImageResponseTest;
-import com.marmore.api.imageedit.config.ImageEditProperties;
-import com.marmore.api.imageedit.cost.ImageCostCalculator;
-import com.marmore.api.imageedit.cost.UsdBrlProvider;
-import com.marmore.api.security.ApiKeyProperties;
-import java.math.BigDecimal;
-import java.nio.file.Path;
-import java.time.Duration;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ClientHttpConnector;
-import org.springframework.http.client.MultipartBodyBuilder;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.web.reactive.server.WebTestClient;
-import reactor.core.publisher.Mono;
-
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = {
-    "marmore.api.key=marmore-local-dev-key-2026",
-    "marmore.openai.image.api-key=sk-teste",
-    "marmore.openai.image.stone-path=${user.dir}/data/granito.png"
-})
-class ImageEditSseIntegrationTest {
-
-  @Autowired WebTestClient webTestClient;
-
-  @TestConfiguration
-  static class TestBeans {
-    @Bean
-    @Primary
-    ImageEditModel mockModel() {
-      ImageEditModel m = mock(ImageEditModel.class);
-      when(m.call(any())).thenReturn(Mono.just(ImageResponseTest.respostaSimples()));
-      return m;
-    }
-
-    @Bean
-    @Primary
-    UsdBrlProvider mockUsdBrl() {
-      UsdBrlProvider p = mock(UsdBrlProvider.class);
-      when(p.currentRate()).thenReturn(Mono.just(new BigDecimal("5.1075")));
-      return p;
-    }
-  }
-
-  @Test
-  void fluxoSseEmiteSequenciaCompleta() {
-    MultipartBodyBuilder builder = new MultipartBodyBuilder();
-    builder.part("image", new ByteArrayResource(new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47}))
-        .filename("ambiente.jpg");
-
-    webTestClient
-        .post()
-        .uri("/images/edit")
-        .header("X-API-Key", "marmore-local-dev-key-2026")
-        .contentType(MediaType.MULTIPART_FORM_DATA)
-        .accept(MediaType.TEXT_EVENT_STREAM)
-        .bodyValue(builder.build())
-        .exchange()
-        .expectStatus().isOk()
-        .expectHeader().contentType(MediaType.TEXT_EVENT_STREAM)
-        .returnResult(String.class)
-        .getResponseBody()
-        .as(reactor.test.StepVerifier::create)
-        .expectNextMatches(l -> l.contains("recebido"))
-        .expectNextMatches(l -> l.contains("redimensionando"))
-        .expectNextMatches(l -> l.contains("gerando"))
-        .expectNextMatches(l -> l.contains("done") || l.contains("error"))
-        .thenCancel()
-        .verify();
-  }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `make test`
-Expected: FAIL — se o contexto não sobe (ex.: `data/granito.png` não existe para o teste). Crie o arquivo `data/granito.png` (mesmo vazio ou um PNG de teste):
-
-```bash
-mkdir -p data && printf '\x89PNG\r\n\x1a\n' > data/granito.png
-```
-
-- [ ] **Step teste verifica o que acontece**
-
-Run: `make test`
-Expected: PASS. O teste valida que o stream SSE emite as 3 fases de status e então done ou error.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/test/java/com/marmore/api/imageedit/web/ImageEditSseIntegrationTest.java data/granito.png
-git commit -m "test(sse): integracao do fluxo SSE completo valida PlantUML"
-```
+- [ ] **Step 1:** Escreva o teste de integração.
+- [ ] **Step 2:** Se `data/granito.png` não existir para o teste, crie um stub.
+- [ ] **Step 3:** Rode `make test`, confirme PASS.
+- [ ] **Step 4:** Commit: `test(sse): integracao do fluxo SSE completo valida PlantUML`
 
 ---
 
-## Task 20: Limpeza final e smoke test
+## Task 21: Smoke test final
 
-Confirma que tudo compila, testes passam, lint passa, e a app sobe.
+**Problema:** Confirmar que tudo compila, testes passam, lint passa, e a app sobe.
 
-- [ ] **Step 1: Lint + format**
-
-```bash
-make lint
-make format
-```
-
-- [ ] **Step 2: Testes completos**
-
-```bash
-make test
-```
-Expected: todos PASS.
-
-- [ ] **Step 3: Smoke test manual (opcional)**
-
-```bash
-make run &
-sleep 10
-curl -N -X POST http://localhost:8080/images/edit \
-  -H "X-API-Key: marmore-local-dev-key-2026" \
-  -H "Accept: text/event-stream" \
-  -F "image=@bruno/marmore-api/assets/ambiente.jpg"
-kill %1
-```
-
-- [ ] **Step 4: Commit final se houver alterações do format**
-
-```bash
-git add -A
-git diff --cached --quiet || git commit -m "style: spotless apply"
-```
+- [ ] **Step 1:** `make lint && make format && make test`. Tudo PASS.
+- [ ] **Step 2:** Smoke test manual (opcional): suba a app, mande um request real com a foto do ambiente do Bruno, observe o stream SSE.
+- [ ] **Step 3:** Commit final se `make format` alterou algo.
 
 ---
 
 ## Self-Review
 
-Após escrever, compare o plano contra o spec.
+**Spec coverage:** cada seção do spec mapeia para uma tarefa.
+- SSE substitui síncrono: Task 13 remove controller, Task 12 adiciona router/handler.
+- Stack WebFlux: Task 16.
+- WebClient streaming: Task 9.
+- Mono ponta a ponta: Task 8, 11.
+- RouterFunction + Handler: Task 12.
+- SecurityWebFilterChain: Task 14.
+- Heartbeat ping 15s: Task 12.
+- Custo fixo: Task 2.
+- Câmbio ao vivo com cache: Task 4.
+- Eventos status (3 fases): Task 5, 12.
+- done com latency/custo/usage: Task 5, 11.
+- imagem base64 puro: Task 5.
+- event: error: Task 5, 12.
+- Feature-folder: Task 7.
+- Tabela hardcoded: Task 2.
+- Exception handler reativo: Task 15.
+- Bruno: Task 19.
+- Quality low: Task 18 (adicionado após feedback do Notion).
+- Integração: Task 20.
 
-**1. Spec coverage:**
-- ✅ SSE substitui síncrono: Task 13 remove o controller, Task 12 adiciona o router/handler SSE.
-- ✅ Stack WebFlux: Task 16 remove webmvc/restclient, mantém webflux/webclient.
-- ✅ WebClient gateway streaming: Task 9 (`OpenAiWebClientImageEditModel` com `stream=true`, `partial_images=0`).
-- ✅ Mono ponta a ponta: Task 8 (`ImageEditModel`), Task 11 (`ImageEditService`).
-- ✅ RouterFunction + Handler: Task 12.
-- ✅ SecurityWebFilterChain integrada: Task 14.
-- ✅ Heartbeat ping 15s: Task 12 (merger `Flux.interval`).
-- ✅ Custo fixo (tabela): Task 2.
-- ✅ Câmbio ao vivo com cache: Task 4.
-- ✅ Eventos status (3 fases, incluindo `gerando`): Task 12 + Task 5.
-- ✅ done com latency_ms/custo_brl/usage: Task 5 (`SseEvents.done`), Task 11 (montagem).
-- ✅ imagem base64 puro: Task 5 (`SseEvents.imagem`).
-- ✅ event: error em falha de domínio: Task 5, Task 12.
-- ✅ Feature-folder: Task 7 (move image → imageedit).
-- ✅ Tabela hardcoded: Task 2 (não no YAML).
-- ✅ Exception handler reativo: Task 15.
-- ✅ Bruno atualizado: Task 18.
-- ✅ Teste de integração: Task 19.
+**Decisões que mudaram durante o brainstorming (registradas no plano):**
+- `quality` default: `medium` → `low` (Task 18), alinhado à rinha e à decisão do usuário.
+- Modelo: `gpt-image-2` (confirmado, apesar da contradição no overview do Notion).
 
-**2. Placeholder scan:** Nenhum "TODO"/"implementar depois". Um risco anotado: o campo `image_b64` vs `b64_json` na Task 9 (anotado como nota de implementação, não placeholder). Parser tenta ambos.
-
-**3. Type consistency:** `SseEvents.done(long, BigDecimal, JsonNode)` é chamado em Task 12 com `(ok.latencyMs(), null, ok.usage())` — tipo bate (`Ok` tem `usage` como `JsonNode`). `costUsd(String, String, String)` da Task 2 é chamado em Task 11 com `opts.model(), opts.quality(), opts.size()` (todos String). `currentRate() → Mono<BigDecimal>` consistente entre Task 4 e Task 11.
+**O que este plano NÃO faz (por design):** ditar código. Cada tarefa descreve o problema, a API pública e os critérios de aceite. A implementação é responsabilidade de quem executa, aplicando Effective Java e os padrões do codebase.
 
 ---
 
@@ -2719,8 +728,8 @@ Após escrever, compare o plano contra o spec.
 
 Plan complete and saved to `docs/superpowers/plans/2026-07-22-sse-edicao-imagem.md`. Two execution options:
 
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration.
+**1. Subagent-Driven (recommended)** — Despacho um subagent novo por task, reviso entre tasks, iteração rápida.
 
-**2. Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints.
+**2. Inline Execution** — Executo as tasks nesta sessão com executing-plans, em batch com checkpoints.
 
-Which approach?
+Qual abordagem?
