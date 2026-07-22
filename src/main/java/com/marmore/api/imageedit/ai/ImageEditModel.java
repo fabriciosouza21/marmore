@@ -4,17 +4,12 @@ import reactor.core.publisher.Mono;
 
 /**
  * Contrato reativo de um modelo de edicao de imagem. Versao reativa do antigo {@code
- * com.marmore.api.image.ai.ImageEditModel}: o metodo {@link #call(ImageEditPrompt)} agora retorna
- * {@link Mono}&lt;{@link ImageResponse}&gt;, que completa quando o provedor (OpenAI) responde.
- * Necessario porque o endpoint SSE e reativo (WebFlux).
+ * com.marmore.api.image.ai.ImageEditModel}: o metodo {@link #call(ImageEditPrompt)} retorna {@link
+ * Mono}&lt;{@link ImageResponse}&gt;, que completa quando o provedor (OpenAI) responde. Necessario
+ * porque o endpoint SSE e reativo (WebFlux).
  *
- * <p>Espelha o desenho do Spring AI ({@code ImageModel}) como interface funcional com um unico
- * metodo {@code call}. A diferenca em relacao ao Spring AI e o argumento {@link ImageEditPrompt}
- * (que carrega imagens binarias de entrada alem do texto) e o retorno reativo. Quando o Spring AI
- * cobrir multiplas imagens de entrada, basta um adapter plugar aqui.
- *
- * <p>Tratamento de erros: falhas devem ser sinalizadas dentro do {@link Mono} (ex.: via {@code
- * Mono.error} com {@link AiImageException}), preservando a natureza lazy do fluxo reativo.
+ * <p>Interface funcional com um unico metodo {@code call}, que recebe um {@link ImageEditPrompt}
+ * (instrucoes de texto e imagens binarias de entrada) e devolve o {@link Mono} reativo.
  */
 @FunctionalInterface
 public interface ImageEditModel {

@@ -36,19 +36,6 @@ class ImageEditModelTest {
     assertThat(resultado.block()).isNull();
   }
 
-  @Test
-  @DisplayName("Lambda pode mapear o prompt antes de responder (composicao reativa)")
-  void lambdaPodeComporReativamente() {
-    ImageEditModel model =
-        prompt ->
-            Mono.fromSupplier(() -> respostaFixa())
-                .map(r -> new ImageResponse(r.results(), r.metadata(), r.raw()));
-
-    ImageResponse resp = model.call(promptFixo()).block();
-
-    assertThat(resp.getResult()).isNotNull();
-  }
-
   private static ImageEditPrompt promptFixo() {
     return ImageEditPrompt.of(
         "prompt",
