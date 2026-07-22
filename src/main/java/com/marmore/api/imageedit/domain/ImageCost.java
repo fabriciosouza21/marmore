@@ -14,10 +14,4 @@ import tools.jackson.databind.JsonNode;
  * @param costBrl custo em BRL
  * @param usage JSON cru de usage retornado pelo provedor, ou {@code null}
  */
-public record ImageCost(BigDecimal costUsd, BigDecimal costBrl, @Nullable JsonNode usage) {
-
-  /** Factory estatica (Item 1, Effective Java). */
-  public static ImageCost of(BigDecimal costUsd, BigDecimal costBrl, @Nullable JsonNode usage) {
-    return new ImageCost(costUsd, costBrl, usage);
-  }
-}
+public record ImageCost(BigDecimal costUsd, BigDecimal costBrl, @Nullable JsonNode usage) {}
