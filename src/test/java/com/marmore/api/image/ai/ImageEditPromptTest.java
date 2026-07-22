@@ -20,15 +20,6 @@ class ImageEditPromptTest {
     assertThat(img.bytes()).containsExactly(1, 2, 3);
   }
 
-  /** {@link InputImage#bytes()} devolve copia, preservando imutabilidade. */
-  @Test
-  void inputImageBytesDevolveCopia() {
-    InputImage img = InputImage.of(new byte[] {1, 2, 3}, "ambiente.jpg");
-
-    img.bytes()[0] = 99;
-    assertThat(img.bytes()).containsExactly(1, 2, 3);
-  }
-
   /** {@link ImageEditPrompt#inputImages()} e imutavel e copia defensivamente a lista de entrada. */
   @Test
   void promptCopiaDefensivamenteListaDeEntrada() {

@@ -18,7 +18,7 @@ import java.util.List;
  * @param inputImages imagens de entrada, em ordem semantica
  */
 public record ImageEditPrompt(
-    String instructions, ImageOptions options, List<InputImage> inputImages) {
+    String instructions, AiImageOptions options, List<InputImage> inputImages) {
 
   /** Construtor canonical copia defensivamente a lista de imagens (Item 17). */
   public ImageEditPrompt {
@@ -27,7 +27,7 @@ public record ImageEditPrompt(
 
   /** Factory estatica (Item 1, Effective Java). */
   public static ImageEditPrompt of(
-      String instructions, ImageOptions options, List<InputImage> inputImages) {
+      String instructions, AiImageOptions options, List<InputImage> inputImages) {
     return new ImageEditPrompt(instructions, options, inputImages);
   }
 }

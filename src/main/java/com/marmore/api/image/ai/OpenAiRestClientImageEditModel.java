@@ -68,25 +68,23 @@ public class OpenAiRestClientImageEditModel implements ImageEditModel {
 
   /** Monta o multipart a partir do prompt, preservando a ordem das imagens de entrada. */
   private static MultiValueMap<String, Object> multipartDe(ImageEditPrompt prompt) {
-    ImageOptions opts = prompt.options();
+    AiImageOptions opts = prompt.options();
     MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
     body.add("prompt", prompt.instructions());
-    if (opts instanceof AiImageOptions ai) {
-      if (ai.model() != null) {
-        body.add("model", ai.model());
-      }
-      if (ai.n() != null) {
-        body.add("n", ai.n());
-      }
-      if (ai.size() != null) {
-        body.add("size", ai.size());
-      }
-      if (ai.quality() != null) {
-        body.add("quality", ai.quality());
-      }
-      if (ai.sendsFidelity()) {
-        body.add("input_fidelity", ai.inputFidelity());
-      }
+    if (opts.model() != null) {
+      body.add("model", opts.model());
+    }
+    if (opts.n() != null) {
+      body.add("n", opts.n());
+    }
+    if (opts.size() != null) {
+      body.add("size", opts.size());
+    }
+    if (opts.quality() != null) {
+      body.add("quality", opts.quality());
+    }
+    if (opts.sendsFidelity()) {
+      body.add("input_fidelity", opts.inputFidelity());
     }
     for (InputImage img : prompt.inputImages()) {
       body.add("image[]", new NamedBytesResource(img.bytes(), img.filename()));
