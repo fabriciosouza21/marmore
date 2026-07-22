@@ -1,0 +1,42 @@
+@startuml containers
+
+!include ../lib/C4_Container.puml
+!include ../lib/icons/sprites/fa5_users.puml
+!include ../lib/icons/sprites/fa5_desktop.puml
+!include ../lib/icons/sprites/dev_spring.puml
+!include ../lib/icons/sprites/fa5_file.puml
+!include ../lib/icons/sprites/fa5_robot.puml
+!include ../lib/icons/sprites/fa5_dollar_sign.puml
+
+title Marmore API — C4 Nível 2: Containers
+
+LAYOUT_WITH_LEGEND()
+
+Person(cliente, "Cliente", "Bruno (testes) / Frontend (produção)")
+Person_Ext(operador, "Operador", "Fornece a imagem da pedra")
+
+System_Boundary(marmore, "Marmore API") {
+
+  Container(spa, "Frontend / Bruno", "HTTP Client", "Envia a foto do ambiente via multipart.\nConsome o SSE no endpoint stream e o PNG\nno endpoint síncrono.", $sprite="desktop")
+
+  Container(api, "API Spring Boot", "Java 21, Spring Boot, MVC", "Backend da edição de imagem. Orquestra:\nresize -> prompt fixo -> chamada OpenAI -> base64.\nExpõe /images/edit (REST) e\n/images/edit/stream (SSE com eventos de progresso).", $sprite="spring_original")
+
+  ContainerDb(data, "Data Folder", "Filesystem", "Imagem da pedra (granito.png) configurada\nem application.yaml. Lida pela API\nno início de cada request.", $sprite="file")
+}
+
+System_Ext(openai, "OpenAI API", "/v1/images/edits", $sprite="robot")
+System_Ext(cotacao, "Serviço de Cotação", "AwesomeAPI / equivalente —\nconversão USD -> BRL para custo", $sprite="dollar_sign")
+
+Rel(cliente, spa, "Usa", "HTTPS")
+Rel(spa, api, "1. POST /images/edit[/stream]\nmultipart: image\nAccept: text/event-stream", "HTTPS")
+Rel(api, data, "Lê granito.png\n[stone-path]", "file")
+Rel(operador, data, "Disponibiliza granito.png", "file")
+
+Rel(api, openai, "2. POST /v1/images/edits\n(ambiente + pedra + prompt, Bearer)", "HTTPS")
+Rel_Back(openai, api, "3. b64_json + usage (tokens)", "HTTPS")
+
+Rel(api, cotacao, "GET cotação USD/BRL\n(cache 1x ao dia)", "HTTPS")
+
+SHOW_FLOATING_LEGEND()
+
+@enduml

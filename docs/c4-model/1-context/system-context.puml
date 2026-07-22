@@ -1,0 +1,26 @@
+@startuml system-context
+
+!include ../lib/C4_Context.puml
+!include ../lib/icons/sprites/fa5_users.puml
+!include ../lib/icons/sprites/fa5_server.puml
+!include ../lib/icons/sprites/fa5_robot.puml
+
+title Marmore API — C4 Nível 1: Contexto do Sistema
+
+LAYOUT_WITH_LEGEND()
+
+Person(cliente, "Cliente", "Aplicação consumidora\n(Bruno para testes, Frontend Web em produção).")
+Person_Ext(operador, "Operador", "Pessoa que disponibiliza a imagem\nda pedra (granito.png) no disco do servidor.")
+
+System(marmore_api, "Marmore API", "Backend de edição de imagem.\nRecebe a foto do ambiente, aplica a pedra\nvia OpenAI e devolve a imagem editada.\nExpõe endpoint REST (/images/edit) e\nSSE com progresso (/images/edit/stream).", $sprite="server")
+
+System_Ext(openai, "OpenAI API", "/v1/images/edits — geração de imagem.\nRecebe ambiente + pedra + prompt fixo\ne devolve b64_json + usage (tokens).", $sprite="robot")
+
+Rel(cliente, marmore_api, "Envia foto do ambiente,\nrecebe imagem editada\n(REST PNG e SSE com progresso)", "HTTPS / multipart")
+Rel(marmore_api, openai, "Solicita edição de imagem\n(ambiente + pedra + prompt)", "HTTPS / multipart")
+Rel_Back(openai, marmore_api, "b64_json + usage (tokens)", "HTTPS / JSON")
+Rel(operador, marmore_api, "Fornece granito.png\nem disco (stone-path)", "arquivo")
+
+SHOW_FLOATING_LEGEND()
+
+@enduml

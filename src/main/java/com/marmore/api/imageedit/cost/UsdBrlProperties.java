@@ -28,11 +28,6 @@ public record UsdBrlProperties(String url, Duration cacheTtl, BigDecimal fallbac
   /** Cotacao default de fallback (Investing 17/07/2026). */
   private static final BigDecimal DEFAULT_FALLBACK = new BigDecimal("5.1075");
 
-  /** Construtor sem args: delega ao canonico com tudo {@code null}, que o compacto preenche. */
-  public UsdBrlProperties() {
-    this(null, null, null);
-  }
-
   /** Construtor compacto que aplica os tres defaults quando ausentes. */
   public UsdBrlProperties {
     if (url == null) {

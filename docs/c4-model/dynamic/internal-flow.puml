@@ -1,0 +1,98 @@
+@startuml internal-flow
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 150
+skinparam participantPadding 10
+skinparam BoxPadding 10
+skinparam note {
+  BackgroundColor #FFF9C4
+  BorderColor #FBC02D
+}
+skinparam sequence {
+  ArrowColor #455A64
+  LifeLineBorderColor #607D8B
+  ParticipantBorderColor #37474F
+  ParticipantBackgroundColor #CFD8DC
+}
+
+title Fluxo interno — arquitetura de camadas (endpoint SSE)
+
+participant "Cliente HTTP" as Cliente
+
+box "Camada Web" #EEEEEE
+  participant "ImageEditController\n(web)" as Controller
+end box
+
+box "Camada de Serviço" #E8F5E9
+  participant "ImageEditService\n(service)" as Service
+  participant "ImageResizer\n(service)" as Resizer
+end box
+
+box "Camada de IA (gateway)" #E3F2FD
+  participant "OpenAiRestClientImageEditModel\n(ai)" as Gateway
+end box
+
+participant "OpenAI\n/v1/images/edits" as OpenAI
+
+Cliente -> Controller : 1. POST /images/edit/stream\n(multipart: image, Accept: text/event-stream)
+Controller -> Controller : 2. cria SseEmitter(timeout=180s)\nenvia 200 OK imediato, abre canal SSE
+
+note over Controller
+  Boundary HTTP. Converte MultipartFile em bytes
+  e delega ao service. O canal já está 200 antes
+  do processamento começar.
+end note
+
+Controller -> Cliente : 3. event: status\ndata: {"fase":"recebido"}
+Controller -> Service : 4. generateStream(bytes, emitter)
+
+note over Service
+  Contrato do service: NUNCA lança exceção.
+  Toda falha vira GenerateResult.Err.
+end note
+
+Service -> Cliente : 5. event: status\ndata: {"fase":"redimensionando"}
+Service -> Resizer : 6. resize(ambiente)
+Resizer --> Service : 7. Optional<byte[]> ambienteReduzido (JPEG <= 1536px)
+
+note over Resizer
+  Thumbnailator, JPEG 1536px, q0.85.
+  Entrada inválida -> Optional.empty() (não lança).
+end note
+
+Service -> Service : 8. carrega pedra do disco\n(granito.png via stonePath)
+
+Service -> Cliente : 9. event: status\ndata: {"fase":"enviando_openai"}
+Service -> Service : 10. monta ImageEditPrompt\n(EditPrompts.COUNTERTOP + AiImageOptions.defaults()\n+ InputImage[ambiente, pedra])
+Service -> Gateway : 11. model.call(prompt)
+
+note over Service, Gateway
+  Heartbeat mantém o canal vivo durante a
+  chamada bloqueante: event: ping a cada 15s.
+end note
+
+loop a cada 15s (enquanto OpenAI responde)
+  Service -> Cliente : event: ping
+end
+
+Gateway -> Gateway : 12. monta multipart\n(image[0]=ambiente, image[1]=pedra)
+Gateway -> OpenAI : 13. POST /v1/images/edits\n(multipart, Bearer)
+OpenAI --> Gateway : 14. 200 JSON com data[0].b64_json (+ usage)
+
+note over Gateway
+  O gateway LANÇA AiImageException em falha
+  (como o Spring AI). Nunca devolve exceção bruta.
+  O service traduz isso em GenerateResult.Err.
+end note
+
+Gateway -> Gateway : 15. traduz JSON em ImageResponse\n(results, metadata, raw)
+Gateway --> Service : 16. retorna ImageResponse
+Service -> Service : 17. traduz em GenerateResult.Ok\n(b64, raw, usage, latencyMs)
+Service --> Controller : 18. retorna GenerateResult.Ok
+
+Controller -> Cliente : 19. event: done\ndata: {"latency_ms", "custo_brl", "usage"}
+Controller -> Cliente : 20. event: imagem\ndata: <base64 PNG puro>
+Controller -> Cliente : 21. emitter.complete() — fim do stream
+
+@enduml
