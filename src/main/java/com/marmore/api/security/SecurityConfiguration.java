@@ -2,39 +2,40 @@ package com.marmore.api.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository;
 
 /**
- * Configuracao de seguranca da API. Autenticacao stateless por API key no header {@code X-API-Key}
- * (filtro {@link ApiKeyAuthFilter} antes do {@link AuthorizationFilter}). CSRF desabilitado (API
- * stateless por header, sem cookies de sessao). Form login e Basic auth default desabilitados
- * (elimina a senha gerada e o redirect para /login).
+ * Configuracao de seguranca reativa da API. Autenticacao stateless por API key no header {@code
+ * X-API-Key} (filtro {@link ApiKeyAuthWebFilter} na posicao {@link
+ * SecurityWebFiltersOrder#AUTHENTICATION}). CSRF desabilitado (API stateless por header, sem
+ * cookies de sessao). Form login e Basic auth desabilitados. Sem {@code
+ * ServerSecurityContextRepository} persistente ({@link NoOpServerSecurityContextRepository}) - cada
+ * request e stateless.
  */
 @Configuration
-@EnableWebSecurity
+@EnableWebFluxSecurity
 public class SecurityConfiguration {
 
   /**
-   * Cadeia de filtros de seguranca.
+   * Cadeia de filtros de seguranca reativa.
    *
-   * @param http builder do Spring Security (Lambda DSL, Spring Security 7)
+   * @param http builder do Spring Security reativo (Lambda DSL)
    * @param apiKeyFilter filtro de autenticacao por API key
    * @return cadeia configurada
-   * @throws Exception em erro de configuracao
    */
   @Bean
-  public SecurityFilterChain filterChain(HttpSecurity http, ApiKeyAuthFilter apiKeyFilter)
-      throws Exception {
+  public SecurityWebFilterChain filterChain(
+      ServerHttpSecurity http, ApiKeyAuthWebFilter apiKeyFilter) {
     http.csrf(csrf -> csrf.disable())
-        .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-        .authorizeHttpRequests(a -> a.anyRequest().authenticated())
-        .addFilterBefore(apiKeyFilter, AuthorizationFilter.class)
         .httpBasic(b -> b.disable())
-        .formLogin(f -> f.disable());
+        .formLogin(f -> f.disable())
+        .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+        .addFilterAt(apiKeyFilter, SecurityWebFiltersOrder.AUTHENTICATION)
+        .authorizeExchange(exchange -> exchange.anyExchange().authenticated());
     return http.build();
   }
 }
