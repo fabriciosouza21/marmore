@@ -119,6 +119,28 @@ class OpenAiWebClientImageEditModelTest {
     assertThat(body.indexOf("ambiente.jpg")).isLessThan(body.indexOf("pedra.png"));
   }
 
+  @DisplayName(
+      "envia no multipart as partes condicionais prompt/model/n/size/quality quando populadas")
+  @Test
+  void enviaMultipartComPartesCondicionaisPopuladas() throws InterruptedException {
+    server.enqueue(
+        sseCompleted("{\"type\":\"image_generation.completed\",\"image_b64\":\"" + B64 + "\"}"));
+
+    model.call(promptFixo()).block();
+
+    String body = server.takeRequest().getBody().readUtf8();
+    assertThat(body)
+        .contains("name=\"prompt\"")
+        .contains("edite a imagem")
+        .contains("name=\"model\"")
+        .contains("gpt-image-2")
+        .contains("name=\"n\"")
+        .contains("name=\"size\"")
+        .contains("1024x1024")
+        .contains("name=\"quality\"")
+        .contains("medium");
+  }
+
   @DisplayName("erro HTTP 500 vira AiImageException")
   @Test
   void erroHttp500ViraAiImageException() {
