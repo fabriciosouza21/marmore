@@ -12,6 +12,8 @@ import tools.jackson.databind.JsonNode;
  *
  * @param costUsd custo em USD
  * @param costBrl custo em BRL
- * @param usage JSON cru de usage retornado pelo provedor, ou {@code null}
+ * @param usage JSON cru de usage retornado pelo provedor, ou {@code null}; reservada -- o servico
+ *     passa {@code null} hoje (o usage real viaja em {@code GenerateResult.Ok.usage}), mantida para
+ *     um futuro detalhamento de custo
  */
 public record ImageCost(BigDecimal costUsd, BigDecimal costBrl, @Nullable JsonNode usage) {}

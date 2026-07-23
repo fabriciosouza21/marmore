@@ -1,13 +1,13 @@
 package com.marmore.api.imageedit.cost;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Provedor da cotacao USD->BRL com cache em memoria por TTL e fallback em falha.
@@ -85,7 +85,7 @@ public class UsdBrlProvider {
         throw new IllegalStateException("USDBRL.bid ausente ou invalido: " + body);
       }
       return new BigDecimal(bid.asText());
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+    } catch (tools.jackson.core.JacksonException e) {
       throw new IllegalStateException("JSON invalido da AwesomeAPI: " + body, e);
     }
   }

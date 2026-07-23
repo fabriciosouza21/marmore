@@ -2,7 +2,6 @@ package com.marmore.api.imageedit.cost;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -15,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Testes de {@link UsdBrlProvider}: parseia {@code bid} da AwesomeAPI, usa fallback em erro
@@ -109,7 +109,7 @@ class UsdBrlProviderTest {
     String body;
     try {
       body = MAPPER.writeValueAsString(Map.of("USDBRL", Map.of("bid", bid)));
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+    } catch (tools.jackson.core.JacksonException e) {
       throw new RuntimeException(e);
     }
     return new MockResponse().setHeader("Content-Type", "application/json").setBody(body);

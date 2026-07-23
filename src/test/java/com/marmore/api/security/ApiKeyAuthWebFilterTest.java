@@ -110,9 +110,9 @@ class ApiKeyAuthWebFilterTest {
     assertThat(autenticado[0]).isTrue();
   }
 
-  @DisplayName("comparacao de chave e resistente a timing (MessageDigest.isEqual)")
+  @DisplayName("chave divergente mesmo compartilhando o prefixo valido e rejeitada com 401")
   @Test
-  void chaveInvalidaMesmoPrefixoRejeita() {
+  void chaveDivergenteMesmoComPrefixoComumEhRejeitada() {
     ApiKeyAuthWebFilter filter = new ApiKeyAuthWebFilter(propsComChave("segredo-certo"));
     MockServerWebExchange exchange = exchange("segredo-certo-mesmo-prefixo-mas-errado");
     boolean[] flag = new boolean[] {false};
