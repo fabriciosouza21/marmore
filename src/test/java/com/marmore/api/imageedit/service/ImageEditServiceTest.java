@@ -91,8 +91,8 @@ class ImageEditServiceTest {
     assertThat(ok.raw()).isNotNull();
     assertThat(ok.usage()).isNotNull();
     assertThat(ok.cost()).as("custo computado").isNotNull();
-    assertThat(ok.cost().costUsd()).isEqualByComparingTo(new BigDecimal("0.053"));
-    assertThat(ok.cost().costBrl()).isEqualByComparingTo(new BigDecimal("0.26500"));
+    assertThat(ok.cost().costUsd()).isEqualByComparingTo(new BigDecimal("0.006"));
+    assertThat(ok.cost().costBrl()).isEqualByComparingTo(new BigDecimal("0.03000"));
     assertThat(ok.latencyMs()).isGreaterThanOrEqualTo(0L);
   }
 

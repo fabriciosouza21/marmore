@@ -9,8 +9,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * marmore.cost.usd-brl}. Carrega URL da API de cambio, TTL do cache e valor de fallback; sem
  * logica.
  *
- * <p>Os defaults refletem a cotacao de 17/07/2026 (Investing) e a AwesomeAPI como fonte. O registro
- * sera registrado em {@code ApiApplication} futuramente (Task 17).
+ * <p>Os defaults refletem a cotacao de 17/07/2026 (Investing) e a AwesomeAPI como fonte. A classe
+ * ja esta registrada em {@code ApiApplication} via {@code @EnableConfigurationProperties}.
  *
  * @param url URL da API de cambio (default: AwesomeAPI)
  * @param cacheTtl TTL do cache em memoria (default: 6 horas)

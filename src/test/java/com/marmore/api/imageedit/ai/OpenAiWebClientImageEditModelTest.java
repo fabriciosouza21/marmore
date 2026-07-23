@@ -138,7 +138,7 @@ class OpenAiWebClientImageEditModelTest {
         .contains("name=\"size\"")
         .contains("1024x1024")
         .contains("name=\"quality\"")
-        .contains("medium");
+        .contains("low");
   }
 
   @DisplayName("erro HTTP 500 vira AiImageException")

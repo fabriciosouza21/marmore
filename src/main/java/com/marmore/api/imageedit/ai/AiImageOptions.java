@@ -29,7 +29,7 @@ public record AiImageOptions(
 
   /** Factory estatica com defaults do produto (Item 1, Effective Java). */
   public static AiImageOptions defaults() {
-    return new AiImageOptions("gpt-image-2", 1, "1024x1024", "medium", null);
+    return new AiImageOptions("gpt-image-2", 1, "1024x1024", "low", null);
   }
 
   /** Indica se {@code input_fidelity} deve ser enviado no multipart (modelos 1.x). */

@@ -16,7 +16,7 @@ class AiImageOptionsTest {
     assertThat(opts.model()).isEqualTo("gpt-image-2");
     assertThat(opts.n()).isEqualTo(1);
     assertThat(opts.size()).isEqualTo("1024x1024");
-    assertThat(opts.quality()).isEqualTo("medium");
+    assertThat(opts.quality()).isEqualTo("low");
     assertThat(opts.inputFidelity()).isNull();
   }
 
