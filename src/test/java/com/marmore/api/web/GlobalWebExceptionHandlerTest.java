@@ -33,7 +33,7 @@ class GlobalWebExceptionHandlerTest {
 
   private static final tools.jackson.databind.ObjectMapper MAPPER = JsonMapper.builder().build();
 
-  private final GlobalWebExceptionHandler handler = new GlobalWebExceptionHandler();
+  private final GlobalWebExceptionHandler handler = new GlobalWebExceptionHandler(MAPPER);
 
   private static MockServerWebExchange exchange() {
     return MockServerWebExchange.from(MockServerHttpRequest.post("/images/edit").build());

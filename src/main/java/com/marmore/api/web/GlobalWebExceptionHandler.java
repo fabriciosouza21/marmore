@@ -16,6 +16,8 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebExceptionHandler;
 import reactor.core.publisher.Mono;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tratador global de excecoes reativo ({@link WebExceptionHandler}). Substitui o antigo advice
@@ -52,6 +54,18 @@ public class GlobalWebExceptionHandler implements WebExceptionHandler, Ordered {
   private static final byte[] CORPO_500 =
       "{\"error\":\"erro interno\"}".getBytes(StandardCharsets.UTF_8);
 
+  private final ObjectMapper mapper;
+
+  /**
+   * Construtor.
+   *
+   * @param mapper Jackson 3 {@link ObjectMapper} injetado pelo Spring, usado para serializar o body
+   *     JSON de erro (nunca por concatenacao de strings)
+   */
+  public GlobalWebExceptionHandler(ObjectMapper mapper) {
+    this.mapper = mapper;
+  }
+
   @Override
   public Mono<Void> handle(ServerWebExchange exchange, Throwable ex) {
     if (ex instanceof ImageEditException iee) {
@@ -80,7 +94,7 @@ public class GlobalWebExceptionHandler implements WebExceptionHandler, Ordered {
    * @param mensagem mensagem de erro (pode ser {@code null})
    * @return Mono que completa ao escrever a resposta
    */
-  private static Mono<Void> responder(
+  private Mono<Void> responder(
       ServerWebExchange exchange, HttpStatusCode status, @Nullable String mensagem) {
     String texto =
         mensagem != null ? mensagem : HttpStatus.resolve(status.value()).getReasonPhrase();
@@ -100,32 +114,24 @@ public class GlobalWebExceptionHandler implements WebExceptionHandler, Ordered {
   }
 
   /**
-   * Monta o body JSON {@code {"error":"<texto>"}} escapando aspas e barras via concatenacao manual
-   * controlada (sem depender de ObjectMapper no main).
-   *
-   * <p>Escapa apenas o necessario para JSON valido: aspa ({@code "}) vira {@code \"} e barra
-   * invertida ({@code \}) vira {@code \\}. Caracteres de controle nao sao esperados em mensagens de
-   * dominio.
+   * Monta o body JSON {@code {"error":"<texto>"}} serializando o record {@link ErrorPayload} via
+   * {@link ObjectMapper}. O Jackson trata o escapamento de aspas, barras e caracteres de controle
+   * corretamente; concatenacao manual e anti-pattern do projeto.
    *
    * @param texto texto da mensagem (nao nulo)
    * @return bytes UTF-8 do JSON
    */
-  private static byte[] jsonError(String texto) {
-    StringBuilder sb = new StringBuilder(texto.length() + 12);
-    sb.append("{\"error\":\"");
-    for (int i = 0; i < texto.length(); i++) {
-      char c = texto.charAt(i);
-      if (c == '"') {
-        sb.append("\\\"");
-      } else if (c == '\\') {
-        sb.append("\\\\");
-      } else {
-        sb.append(c);
-      }
+  private byte[] jsonError(String texto) {
+    try {
+      return mapper.writeValueAsBytes(new ErrorPayload(texto));
+    } catch (JacksonException e) {
+      // records simples nunca falham ao serializar; defesa em profundidade.
+      throw new IllegalStateException("falha ao serializar payload de erro: " + texto, e);
     }
-    sb.append("\"}");
-    return sb.toString().getBytes(StandardCharsets.UTF_8);
   }
+
+  /** Payload de erro serializado pelo Jackson: {@code {"error":"..."}}. */
+  private record ErrorPayload(String error) {}
 
   /** Escreve a resposta com status e body JSON, setando content-type e content-length. */
   private static Mono<Void> escrever(
