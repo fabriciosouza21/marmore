@@ -1,7 +1,7 @@
 package com.marmore.api.imageedit.ai;
 
 import java.util.Set;
-import org.springframework.lang.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Opcoes da chamada de edicao de imagem para o provedor OpenAI. Anloga a {@code
