@@ -12,10 +12,8 @@ spring:
         speech: none
         transcription: none
       moderation: none
-  servlet:
-    multipart:
-      max-file-size: 25MB
-      max-request-size: 25MB
+  codec:
+    max-in-memory-size: 25MB
 
 marmore:
   api:
@@ -27,3 +25,8 @@ marmore:
       default-model: gpt-image-2
       timeout: 180s
       stone-path: ${user.dir}/data/granito.png
+  cost:
+    usd-brl:
+      url: https://economia.awesomeapi.com.br/json/last/USD-BRL
+      cache-ttl: 6h
+      fallback: 5.1075

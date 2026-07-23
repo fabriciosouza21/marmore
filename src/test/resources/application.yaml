@@ -17,6 +17,8 @@ spring:
         speech: none
         transcription: none
       moderation: none
+  codec:
+    max-in-memory-size: 25MB
 
 marmore:
   api:
@@ -24,3 +26,8 @@ marmore:
   openai:
     image:
       stone-path: ${user.dir}/data/granito.png
+  cost:
+    usd-brl:
+      url: https://economia.awesomeapi.com.br/json/last/USD-BRL
+      cache-ttl: 6h
+      fallback: 5.1075
