@@ -8,13 +8,14 @@ import org.junit.jupiter.api.Test;
 class GenerateResultTest {
 
   @Test
-  void okCarregaBase64LatenciaRaw() {
-    GenerateResult.Ok ok = new GenerateResult.Ok("b64abc", null, null, 42L);
+  void okCarregaBase64LatenciaRawCusto() {
+    GenerateResult.Ok ok = new GenerateResult.Ok("b64abc", null, null, 42L, null);
 
     assertThat(ok.b64()).isEqualTo("b64abc");
     assertThat(ok.latencyMs()).isEqualTo(42L);
     assertThat(ok.raw()).isNull();
     assertThat(ok.usage()).isNull();
+    assertThat(ok.cost()).isNull();
   }
 
   @Test
@@ -27,7 +28,7 @@ class GenerateResultTest {
 
   @Test
   void instanciasOkErrImplementamGerarResultado() {
-    GenerateResult ok = new GenerateResult.Ok("x", null, null, 1L);
+    GenerateResult ok = new GenerateResult.Ok("x", null, null, 1L, null);
     GenerateResult err = new GenerateResult.Err("y", 2L);
 
     assertThat(ok).isInstanceOf(GenerateResult.class);

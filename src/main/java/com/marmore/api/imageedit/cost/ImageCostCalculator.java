@@ -3,10 +3,12 @@ package com.marmore.api.imageedit.cost;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.stereotype.Component;
 
 /**
  * Calcula o custo em USD de uma geracao de imagem a partir de uma tabela hardcodeada indexada por
- * modelo, qualidade e tamanho. Stateless: pode ser instanciada direto ou usada como bean Spring.
+ * modelo, qualidade e tamanho. Stateless: pode ser instanciada direto ou usada como bean Spring
+ * (registrada como {@link Component @Component} para injecao no {@code ImageEditService}).
  *
  * <p>A tabela reflete os precos oficiais OpenAI (jul/2026, mesma fonte da rinha). O valor e por
  * imagem (a OpenAI cobra por imagem, nao por token), entao o custo depende apenas de tres
@@ -21,6 +23,7 @@ import java.util.Optional;
  *
  * <p>Combinacoes ausentes na tabela retornam {@link Optional#empty()}.
  */
+@Component
 public final class ImageCostCalculator {
 
   /** Default de tamanho quando {@code auto} ou ausente (default da OpenAI). */

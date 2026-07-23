@@ -1,7 +1,7 @@
 package com.marmore.api.image.web;
 
-import com.marmore.api.image.service.ImageEditService;
 import com.marmore.api.imageedit.domain.GenerateResult;
+import com.marmore.api.imageedit.service.ImageEditService;
 import java.io.IOException;
 import java.util.Base64;
 import org.springframework.http.MediaType;
@@ -16,6 +16,11 @@ import org.springframework.web.multipart.MultipartFile;
  * Endpoint HTTP para edicao de imagem. Recebe apenas a foto do ambiente; o prompt fixo e a imagem
  * da pedra sao injetados pelo service. Devolve o PNG resultante do {@code /v1/images/edits} da
  * OpenAI.
+ *
+ * <p>NOTA: o service subjacente e reativo ({@link ImageEditService#generate(byte[])} retorna {@code
+ * Mono}). Este controller continua servlet/MVC (sincrono, {@code ResponseEntity<byte[]>}); por isso
+ * bloqueia no limite ({@code .block()}) para traduzir o {@link GenerateResult} em resposta HTTP. A
+ * conversao para SSE reativo e responsabilidade do handler da Task 12.
  */
 @RestController
 @RequestMapping("/images")
@@ -26,7 +31,7 @@ public class ImageEditController {
   /**
    * Construtor.
    *
-   * @param service servico de edicao
+   * @param service servico de edicao reativo
    */
   public ImageEditController(ImageEditService service) {
     this.service = service;
@@ -42,7 +47,7 @@ public class ImageEditController {
   @PostMapping(value = "/edit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public ResponseEntity<byte[]> edit(@RequestParam("image") MultipartFile image)
       throws IOException {
-    GenerateResult resultado = service.generate(image.getBytes());
+    GenerateResult resultado = service.generate(image.getBytes()).block();
     if (resultado instanceof GenerateResult.Err err) {
       throw new ImageEditException(statusPara(err.error()), err.error());
     }

@@ -25,7 +25,7 @@ class FileSystemResultWriterTest {
   void escreveImagemEhRespostaQuandoResultadoDeSucessoComBruto() throws IOException {
     String b64 = java.util.Base64.getEncoder().encodeToString(new byte[] {1, 2, 3});
     var raw = mapper.readTree("{\"data\":[{\"b64_json\":\"" + b64 + "\"}]}");
-    GenerateResult ok = new GenerateResult.Ok(b64, raw, null, 10L);
+    GenerateResult ok = new GenerateResult.Ok(b64, raw, null, 10L, null);
 
     ImageResultWriter.WriteResult result = writer.write(ok, temp, "bancada");
 
