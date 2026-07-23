@@ -16,11 +16,9 @@ import org.springframework.web.reactive.function.server.ServerResponse;
  * {@code POST /images/edit}, consumindo {@code multipart/form-data} e aceitando resposta em {@code
  * text/event-stream}.
  *
- * <p>Coexiste com o {@link com.marmore.api.image.web.ImageEditController} legado (annotation-based,
- * servlet/MVC) sem conflito enquanto o app roda no hibrido servlet+webflux: em modo servlet o
- * dispatcher do Spring MVC atende o controller anotado e o RouterFunction so e considerado em modo
- * WebFlux puro (Task 16). RouterFunction beans sao ignorados pelo {@code DispatcherHandler} do
- * Spring MVC.
+ * <p>Em modo servlet (hibrido servlet+webflux), o RouterFunction so e considerado pelo {@code
+ * DispatcherHandler} em modo WebFlux puro (Task 16); beans {@link RouterFunction} sao ignorados
+ * pelo dispatcher do Spring MVC.
  */
 @Configuration
 public class ImageEditRouter {
