@@ -35,7 +35,7 @@ public class SseEvents {
   /**
    * Construtor.
    *
-   * @param mapper Jackson 3 {@link ObjectMapper} injetado pelo Spring
+   * @param mapper {@link ObjectMapper} injetado pelo Spring
    */
   public SseEvents(ObjectMapper mapper) {
     this.jsonWriter = mapper.writer();

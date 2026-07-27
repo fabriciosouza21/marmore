@@ -9,7 +9,7 @@ package com.marmore.api.imageedit.ai;
  */
 public record Image(String b64Json) {
 
-  /** Factory estatica (Item 1, Effective Java). */
+  /** Factory estatica. */
   public static Image of(String b64Json) {
     return new Image(b64Json);
   }

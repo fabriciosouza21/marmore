@@ -12,7 +12,7 @@ import tools.jackson.databind.JsonNode;
  */
 public record ImageResponseMetadata(@Nullable JsonNode usage) {
 
-  /** Factory estatica para metadata sem uso (Item 1, Effective Java). */
+  /** Factory estatica para metadata sem uso. */
   public static ImageResponseMetadata empty() {
     return new ImageResponseMetadata(null);
   }

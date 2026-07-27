@@ -1,9 +1,9 @@
 package com.marmore.api.imageedit.ai;
 
 /**
- * Falha irrecuperavel na chamada a um modelo de imagem. Unchecked (Item 71, Effective Java): o
- * chamador ({@code ImageEditService}) traduz para {@code GenerateResult.Err}. Sem acoplamento com
- * HTTP — a camada web decide o status.
+ * Falha irrecuperavel na chamada a um modelo de imagem. Unchecked: o chamador ({@code
+ * ImageEditService}) traduz para {@code GenerateResult.Err}. Sem acoplamento com HTTP — a camada
+ * web decide o status.
  */
 public class AiImageException extends RuntimeException {
 

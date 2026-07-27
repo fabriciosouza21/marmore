@@ -20,12 +20,12 @@ import java.util.List;
 public record ImageEditPrompt(
     String instructions, AiImageOptions options, List<InputImage> inputImages) {
 
-  /** Construtor canonical copia defensivamente a lista de imagens (Item 17). */
+  /** Construtor canonical copia defensivamente a lista de imagens. */
   public ImageEditPrompt {
     inputImages = List.copyOf(inputImages);
   }
 
-  /** Factory estatica (Item 1, Effective Java). */
+  /** Factory estatica. */
   public static ImageEditPrompt of(
       String instructions, AiImageOptions options, List<InputImage> inputImages) {
     return new ImageEditPrompt(instructions, options, inputImages);

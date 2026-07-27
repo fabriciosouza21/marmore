@@ -20,9 +20,8 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Tratador global de excecoes reativo ({@link WebExceptionHandler}). Substitui o antigo advice
- * servlet {@code @RestControllerAdvice}, que nao e chamado no stack WebFlux. Traduz excecoes em
- * respostas JSON {@code {"error":"..."}} preservando a semantica de status:
+ * Tratador global de excecoes reativo ({@link WebExceptionHandler}). Traduz excecoes em respostas
+ * JSON {@code {"error":"..."}} preservando a semantica de status:
  *
  * <ul>
  *   <li>{@link ImageEditException} -> status embutido na excecao (dominio).

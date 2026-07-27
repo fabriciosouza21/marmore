@@ -9,7 +9,7 @@ package com.marmore.api.imageedit.ai;
  */
 public record ImageGeneration(Image output) {
 
-  /** Factory estatica (Item 1, Effective Java). */
+  /** Factory estatica. */
   public static ImageGeneration of(Image output) {
     return new ImageGeneration(output);
   }
