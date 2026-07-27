@@ -32,9 +32,9 @@ public class ImageResizer {
       return Optional.empty();
     }
     BufferedImage original;
-    try {
-      original = ImageIO.read(new ByteArrayInputStream(input));
-    } catch (IOException e) {
+    try (var in = new ByteArrayInputStream(input)) {
+      original = ImageIO.read(in);
+    } catch (IOException ignored) {
       return Optional.empty();
     }
     if (original == null) {
@@ -44,16 +44,15 @@ public class ImageResizer {
     int altura = original.getHeight();
     int maiorLado = Math.max(largura, altura);
     int alvo = Math.min(maiorLado, MAX_LADO);
-    ByteArrayOutputStream out = new ByteArrayOutputStream();
-    try {
+    try (var out = new ByteArrayOutputStream()) {
       Thumbnails.of(original)
           .size(alvo, alvo)
           .outputFormat("jpg")
           .outputQuality(QUALIDADE)
           .toOutputStream(out);
+      return Optional.of(out.toByteArray());
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
-    return Optional.of(out.toByteArray());
   }
 }
