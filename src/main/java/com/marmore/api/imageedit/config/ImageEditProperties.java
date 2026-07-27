@@ -1,5 +1,6 @@
 package com.marmore.api.imageedit.config;
 
+import com.marmore.api.imageedit.model.ImageModel;
 import java.nio.file.Path;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -13,7 +14,7 @@ public class ImageEditProperties {
 
   private String baseUrl = "https://api.openai.com";
   private String apiKey;
-  private String defaultModel = "gpt-image-2";
+  private String defaultModel = ImageModel.GPT_IMAGE_2.apiValue();
   private Duration timeout = Duration.ofSeconds(180);
   private Path stonePath;
 
