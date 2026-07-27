@@ -53,8 +53,8 @@ class OpenAiWebClientImageEditModelTest {
     ImageResponse resp = model.call(promptFixo()).block();
 
     assertThat(resp).isNotNull();
-    assertThat(resp.getResult()).isNotNull();
-    assertThat(resp.getResult().output().b64Json()).isEqualTo(B64);
+    assertThat(resp.getResult()).isPresent();
+    assertThat(resp.getResult().get().output().b64Json()).isEqualTo(B64);
     assertThat(resp.metadata().usage()).isNotNull();
     assertThat(resp.metadata().usage().get("total_tokens").asInt()).isEqualTo(30);
   }
@@ -68,7 +68,7 @@ class OpenAiWebClientImageEditModelTest {
     ImageResponse resp = model.call(promptFixo()).block();
 
     assertThat(resp).isNotNull();
-    assertThat(resp.getResult().output().b64Json()).isEqualTo(B64);
+    assertThat(resp.getResult().get().output().b64Json()).isEqualTo(B64);
     assertThat(resp.metadata().usage()).isNull();
   }
 
@@ -91,7 +91,7 @@ class OpenAiWebClientImageEditModelTest {
     ImageResponse resp = model.call(promptFixo()).block();
 
     assertThat(resp).isNotNull();
-    assertThat(resp.getResult().output().b64Json()).isEqualTo(B64);
+    assertThat(resp.getResult().get().output().b64Json()).isEqualTo(B64);
   }
 
   @DisplayName(

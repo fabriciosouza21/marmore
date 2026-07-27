@@ -2,11 +2,11 @@ package com.marmore.api.imageedit.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.marmore.api.imageedit.TestImages;
 import com.marmore.api.imageedit.ai.AiImageException;
 import com.marmore.api.imageedit.ai.Image;
 import com.marmore.api.imageedit.ai.ImageEditModel;
@@ -15,12 +15,10 @@ import com.marmore.api.imageedit.ai.ImageGeneration;
 import com.marmore.api.imageedit.ai.ImageResponse;
 import com.marmore.api.imageedit.ai.ImageResponseMetadata;
 import com.marmore.api.imageedit.config.ImageEditProperties;
-import com.marmore.api.imageedit.cost.ImageCostCalculator;
 import com.marmore.api.imageedit.cost.UsdBrlProvider;
 import com.marmore.api.imageedit.domain.EditPrompts;
 import com.marmore.api.imageedit.domain.GenerateResult;
 import java.math.BigDecimal;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,43 +37,19 @@ class ImageEditServiceTest {
   private ImageEditProperties props;
   private ImageResizer resizer;
   private ImageEditModel model;
-  private ImageCostCalculator calculator;
   private UsdBrlProvider usdBrl;
   private ImageEditService service;
 
-  /**
-   * Caminho da pedra de teste (ambiente.png do classpath), resolvido em runtime. Reaproveitado do
-   * teste legado para nao depender de um arquivo de pedra real no classpath.
-   */
-  private static Path pedraValida() {
-    try {
-      return new org.springframework.core.io.ClassPathResource("test-images/ambiente.png")
-          .getFile()
-          .toPath();
-    } catch (java.io.IOException e) {
-      throw new IllegalStateException("ambiente.png ausente do classpath", e);
-    }
-  }
-
-  private static byte[] bytesDaPedraDeTeste() throws Exception {
-    try (var in =
-        new org.springframework.core.io.ClassPathResource("test-images/ambiente.png")
-            .getInputStream()) {
-      return in.readAllBytes();
-    }
-  }
-
   @BeforeEach
-  void setUp() {
+  void setUp() throws Exception {
     props = new ImageEditProperties();
     props.setApiKey("chave-teste");
-    props.setStonePath(pedraValida());
+    props.setStonePath(TestImages.ambientePath());
     resizer = new ImageResizer();
     model = org.mockito.Mockito.mock(ImageEditModel.class);
-    calculator = new ImageCostCalculator();
     usdBrl = org.mockito.Mockito.mock(UsdBrlProvider.class);
     when(usdBrl.currentRate()).thenReturn(monoJust(new BigDecimal("5.00")));
-    service = new ImageEditService(props, resizer, model, calculator, usdBrl);
+    service = new ImageEditService(props, resizer, model, usdBrl);
   }
 
   @DisplayName("sucesso: gateway devolve b64 -> Ok com b64 e custo BRL calculado")
@@ -83,7 +57,7 @@ class ImageEditServiceTest {
   void sucessoQuandoGatewayDevolveB64RetornaOkComCusto() throws Exception {
     when(model.call(any())).thenReturn(monoJust(respostaComB64("aGVsbG8=")));
 
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     GenerateResult.Ok ok = (GenerateResult.Ok) result;
@@ -96,29 +70,12 @@ class ImageEditServiceTest {
     assertThat(ok.latencyMs()).isGreaterThanOrEqualTo(0L);
   }
 
-  @DisplayName("sucesso: custo ausente na tabela -> Ok com custo nulo")
-  @Test
-  void sucessoComModeloSemPrecoRetornaOkComCustoNulo() throws Exception {
-    // Forca o calculator a nao achar a combinacao (ImageCostCalculator e final, logo mock).
-    ImageCostCalculator semPreco = org.mockito.Mockito.mock(ImageCostCalculator.class);
-    when(semPreco.costUsd(anyString(), anyString(), anyString()))
-        .thenReturn(java.util.Optional.empty());
-    service = new ImageEditService(props, resizer, model, semPreco, usdBrl);
-    when(model.call(any())).thenReturn(monoJust(respostaComB64("aA==")));
-
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
-
-    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
-    assertThat(((GenerateResult.Ok) result).b64()).isEqualTo("aA==");
-    assertThat(((GenerateResult.Ok) result).cost()).isNull();
-  }
-
   @DisplayName("apiKey ausente -> Err sem chamar o gateway")
   @Test
   void erroQuandoApiKeyVaziaSemChamarGateway() throws Exception {
     props.setApiKey("");
 
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).startsWith("OPENAI_API_KEY");
@@ -130,7 +87,7 @@ class ImageEditServiceTest {
   void erroQuandoPedraAusenteSemChamarGateway() throws Exception {
     props.setStonePath(Paths.get("/tmp/arquivo-que-nao-existe.png"));
 
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).startsWith("stone image not found");
@@ -152,7 +109,7 @@ class ImageEditServiceTest {
   void erroQuandoGatewayLancaAiImageException() throws Exception {
     when(model.call(any())).thenReturn(monoError(new AiImageException("[400]: bad model")));
 
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).contains("400").contains("bad model");
@@ -163,7 +120,7 @@ class ImageEditServiceTest {
   void erroQuandoRespostaSemB64() throws Exception {
     when(model.call(any())).thenReturn(monoJust(respostaSemB64()));
 
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
     assertThat(((GenerateResult.Err) result).error()).startsWith("resposta sem b64_json");
@@ -174,7 +131,7 @@ class ImageEditServiceTest {
   void promptEnviadoTemDuasImagensNaOrdemAmbientePedraComPromptFixo() throws Exception {
     when(model.call(any())).thenReturn(monoJust(respostaComB64("aA==")));
 
-    service.generate(bytesDaPedraDeTeste()).block();
+    service.generate(TestImages.ambiente()).block();
 
     ArgumentCaptor<ImageEditPrompt> captor = ArgumentCaptor.forClass(ImageEditPrompt.class);
     verify(model).call(captor.capture());
@@ -192,7 +149,7 @@ class ImageEditServiceTest {
     when(usdBrl.currentRate()).thenReturn(monoError(new IllegalStateException("cotacao fora")));
     when(model.call(any())).thenReturn(monoJust(respostaComB64("aA==")));
 
-    GenerateResult result = service.generate(bytesDaPedraDeTeste()).block();
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     assertThat(((GenerateResult.Ok) result).b64()).isEqualTo("aA==");

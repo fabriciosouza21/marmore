@@ -1,12 +1,9 @@
 package com.marmore.api.imageedit.web;
 
 import com.marmore.api.imageedit.domain.GenerateResult;
-import com.marmore.api.imageedit.domain.ImageCost;
 import com.marmore.api.imageedit.service.ImageEditService;
-import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.Map;
-import org.jspecify.annotations.Nullable;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpStatus;
@@ -133,19 +130,11 @@ public class ImageEditHandler {
   private Flux<ServerSentEvent<Object>> toResultEvents(GenerateResult result) {
     if (result instanceof GenerateResult.Ok ok) {
       return Flux.just(
-          events.done(ok.latencyMs(), custoBrl(ok), ok.usage()), events.imagem(ok.b64()));
+          events.done(ok.latencyMs(), ok.custoBrl().orElse(null), ok.usage()),
+          events.imagem(ok.b64()));
     }
     GenerateResult.Err err = (GenerateResult.Err) result;
     return Flux.just(events.error(err.error(), err.latencyMs()));
-  }
-
-  /**
-   * Extrai o custo em BRL do {@link GenerateResult.Ok}, ou {@code null} quando o custo nao foi
-   * computado (combinacao modelo/qualidade/tamanho ausente ou cotacao falhou).
-   */
-  private static @Nullable BigDecimal custoBrl(GenerateResult.Ok ok) {
-    ImageCost cost = ok.cost();
-    return cost != null ? cost.costBrl() : null;
   }
 
   /**

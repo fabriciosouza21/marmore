@@ -2,6 +2,8 @@ package com.marmore.api.imageedit.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.math.BigDecimal;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** Testes de {@link GenerateResult}. */
@@ -33,5 +35,21 @@ class GenerateResultTest {
 
     assertThat(ok).isInstanceOf(GenerateResult.class);
     assertThat(err).isInstanceOf(GenerateResult.class);
+  }
+
+  @DisplayName("custoBrl retorna BRL do cost ou empty quando cost e nulo")
+  @Test
+  void custoBrlRetornaBrlOuEmpty() {
+    GenerateResult.Ok semCusto = new GenerateResult.Ok("x", null, null, 1L, null);
+    GenerateResult.Ok comCusto =
+        new GenerateResult.Ok(
+            "x",
+            null,
+            null,
+            1L,
+            new ImageCost(new BigDecimal("0.01"), new BigDecimal("0.05"), null));
+
+    assertThat(semCusto.custoBrl()).isEmpty();
+    assertThat(comCusto.custoBrl()).hasValue(new BigDecimal("0.05"));
   }
 }

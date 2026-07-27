@@ -2,6 +2,7 @@ package com.marmore.api.imageedit.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.marmore.api.imageedit.TestImages;
 import com.marmore.api.imageedit.ai.Image;
 import com.marmore.api.imageedit.ai.ImageEditModel;
 import com.marmore.api.imageedit.ai.ImageGeneration;
@@ -21,7 +22,6 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
@@ -81,9 +81,7 @@ class ImageEditSseIntegrationTest {
         "marmore.openai.image.stone-path",
         () -> {
           try {
-            return new ClassPathResource("test-images/granito-test.png")
-                .getFile()
-                .getAbsolutePath();
+            return TestImages.granitoPath().toAbsolutePath().toString();
           } catch (Exception e) {
             throw new IllegalStateException("granito-test.png ausente do classpath de teste", e);
           }
@@ -101,8 +99,8 @@ class ImageEditSseIntegrationTest {
 
   @DisplayName("sucesso: multipart válido emite status×3 -> done -> imagem via SSE")
   @Test
-  void sucessoEmiteSequenciaCompletaSse() {
-    byte[] ambiente = bytesDoClasspath("test-images/ambiente.png");
+  void sucessoEmiteSequenciaCompletaSse() throws Exception {
+    byte[] ambiente = TestImages.ambiente();
 
     var responseBody =
         cliente()
@@ -131,8 +129,8 @@ class ImageEditSseIntegrationTest {
 
   @DisplayName("sem header X-API-Key -> 401 Unauthorized")
   @Test
-  void semApiKeyRetorna401() {
-    byte[] ambiente = bytesDoClasspath("test-images/ambiente.png");
+  void semApiKeyRetorna401() throws Exception {
+    byte[] ambiente = TestImages.ambiente();
 
     cliente()
         .post()
@@ -143,15 +141,6 @@ class ImageEditSseIntegrationTest {
         .exchange()
         .expectStatus()
         .isUnauthorized();
-  }
-
-  /** Le os bytes de um recurso do classpath (ex.: ambiente.png de teste). */
-  private static byte[] bytesDoClasspath(String caminho) {
-    try (var in = new ClassPathResource(caminho).getInputStream()) {
-      return in.readAllBytes();
-    } catch (Exception e) {
-      throw new IllegalStateException("falha ao ler " + caminho + " do classpath", e);
-    }
   }
 
   /** Constroi o multipart com a parte "image" (foto do ambiente) a partir dos bytes dados. */

@@ -24,14 +24,14 @@ class ImageResponseTest {
   }
 
   @Test
-  @DisplayName("getResult retorna a primeira geracao ou nulo se vazia")
-  void getResultRetornaPrimeiraOuNulo() {
+  @DisplayName("getResult retorna a primeira geracao ou empty se vazia")
+  void getResultRetornaPrimeiraOuEmpty() {
     ImageGeneration gen = ImageGeneration.of(Image.of("aA=="));
     ImageResponse comGen = new ImageResponse(List.of(gen), ImageResponseMetadata.empty(), null);
     ImageResponse vazia = new ImageResponse(List.of(), ImageResponseMetadata.empty(), null);
 
-    assertThat(comGen.getResult()).isEqualTo(gen);
-    assertThat(vazia.getResult()).isNull();
+    assertThat(comGen.getResult()).hasValue(gen);
+    assertThat(vazia.getResult()).isEmpty();
   }
 
   @Test

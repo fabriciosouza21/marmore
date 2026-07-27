@@ -14,8 +14,10 @@ import com.marmore.api.imageedit.domain.ImageCost;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -47,7 +49,6 @@ public class ImageEditService {
   private final ImageEditProperties props;
   private final ImageResizer resizer;
   private final ImageEditModel model;
-  private final ImageCostCalculator calculator;
   private final UsdBrlProvider usdBrl;
 
   /**
@@ -56,19 +57,16 @@ public class ImageEditService {
    * @param props propriedades do modulo (apiKey, stonePath, etc.)
    * @param resizer redimensionador de imagem (bloqueante)
    * @param model gateway de edicao de imagem reativo (OpenAI ou outro)
-   * @param calculator calculadora de custo em USD (tabela hardcodeada)
    * @param usdBrl provedor da cotacao USD->BRL (reativo, com cache/fallback)
    */
   public ImageEditService(
       ImageEditProperties props,
       ImageResizer resizer,
       ImageEditModel model,
-      ImageCostCalculator calculator,
       UsdBrlProvider usdBrl) {
     this.props = props;
     this.resizer = resizer;
     this.model = model;
-    this.calculator = calculator;
     this.usdBrl = usdBrl;
   }
 
@@ -155,17 +153,15 @@ public class ImageEditService {
    */
   private Mono<GenerateResult> toResult(ImageResponse resp, long callStart) {
     long latency = ms(callStart);
-    if (resp.getResult() == null) {
+    Optional<String> b64 = resp.firstB64();
+    if (b64.isEmpty()) {
       return Mono.just(new GenerateResult.Err("resposta sem b64_json", latency));
     }
-    String b64 = resp.getResult().output().b64Json();
-    if (b64 == null) {
-      return Mono.just(new GenerateResult.Err("resposta sem b64_json", latency));
-    }
+    String b64Value = b64.get();
     java.util.function.Function<ImageCost, GenerateResult> toOkWithCost =
-        cost -> new GenerateResult.Ok(b64, resp.raw(), resp.metadata().usage(), latency, cost);
+        cost -> new GenerateResult.Ok(b64Value, resp.raw(), resp.metadata().usage(), latency, cost);
     GenerateResult okSemCusto =
-        new GenerateResult.Ok(b64, resp.raw(), resp.metadata().usage(), latency, null);
+        new GenerateResult.Ok(b64Value, resp.raw(), resp.metadata().usage(), latency, null);
     return computeCost()
         .map(toOkWithCost)
         .onErrorResume(error -> Mono.just(okSemCusto))
@@ -179,7 +175,7 @@ public class ImageEditService {
    */
   private Mono<ImageCost> computeCost() {
     AiImageOptions opts = AiImageOptions.defaults();
-    Optional<BigDecimal> costUsd = calculator.costUsd(opts.model(), opts.quality(), opts.size());
+    Optional<BigDecimal> costUsd = ImageCostCalculator.costUsd(opts);
     if (costUsd.isEmpty()) {
       return Mono.empty();
     }
@@ -207,7 +203,36 @@ public class ImageEditService {
   }
 
   /** Bytes ja preparados (ambiente redimensionado + pedra lida do disco). */
-  private record PreparedInputs(byte[] ambiente, byte[] pedra) {}
+  private record PreparedInputs(byte[] ambiente, byte[] pedra) {
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (!(o instanceof PreparedInputs(byte[] ambiente1, byte[] pedra1))) {
+        return false;
+      }
+      return Arrays.equals(ambiente, ambiente1) && Arrays.equals(pedra, pedra1);
+    }
+
+    @Override
+    public int hashCode() {
+      int result = Arrays.hashCode(ambiente);
+      return 31 * result + Arrays.hashCode(pedra);
+    }
+
+    @Override
+    @NotNull
+    public String toString() {
+      return "PreparedInputs{"
+          + "ambiente="
+          + Arrays.toString(ambiente)
+          + ", pedra="
+          + Arrays.toString(pedra)
+          + '}';
+    }
+  }
 
   /** Sinal interno de falha de decode, traduzido para Err em {@link #toErr}. */
   private static final class DecodeFailedException extends RuntimeException {

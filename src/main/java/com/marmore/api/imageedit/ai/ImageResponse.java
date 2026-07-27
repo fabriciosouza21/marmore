@@ -1,6 +1,7 @@
 package com.marmore.api.imageedit.ai;
 
 import java.util.List;
+import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.JsonNode;
 
@@ -20,14 +21,18 @@ import tools.jackson.databind.JsonNode;
 public record ImageResponse(
     List<ImageGeneration> results, ImageResponseMetadata metadata, @Nullable JsonNode raw) {
 
-  /** Construtor canonical copia defensivamente a lista (imutabilidade, Item 17). */
+  /** Construtor canonical copia defensivamente a lista. */
   public ImageResponse {
     results = List.copyOf(results);
   }
 
-  /** Retorna a primeira geracao, ou nulo se vazia. */
-  @Nullable
-  public ImageGeneration getResult() {
-    return results.isEmpty() ? null : results.get(0);
+  /** Retorna a primeira geracao, ou empty se vazia. */
+  public Optional<ImageGeneration> getResult() {
+    return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
+  }
+
+  /** Retorna o base64 da primeira geracao, ou empty se nao houver geracao com imagem. */
+  public Optional<String> firstB64() {
+    return getResult().map(g -> g.output().b64Json());
   }
 }

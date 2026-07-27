@@ -1,5 +1,7 @@
 package com.marmore.api.imageedit.domain;
 
+import java.math.BigDecimal;
+import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.JsonNode;
 
@@ -18,7 +20,13 @@ public sealed interface GenerateResult permits GenerateResult.Ok, GenerateResult
    * {@code null}).
    */
   record Ok(String b64, JsonNode raw, JsonNode usage, long latencyMs, @Nullable ImageCost cost)
-      implements GenerateResult {}
+      implements GenerateResult {
+
+    /** Retorna o custo em BRL, ou empty quando o custo nao foi computado. */
+    public Optional<BigDecimal> custoBrl() {
+      return cost != null ? Optional.of(cost.costBrl()) : Optional.empty();
+    }
+  }
 
   /** Resultado de erro: mensagem amigavel e latencia medida ate a falha. */
   record Err(String error, long latencyMs) implements GenerateResult {}
