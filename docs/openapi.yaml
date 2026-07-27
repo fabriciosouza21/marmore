@@ -1,0 +1,227 @@
+openapi: 3.1.0
+
+info:
+  title: marmore-api
+  version: 0.0.1
+  description: |
+    API de edicao de imagem do projeto marmore. Gera uma versao da foto do
+    ambiente com a pedra (granito) aplicada ao Balcao, via modelo de edicao
+    de imagem da OpenAI (gpt-image).
+
+    Stack: Spring Boot 4.1, Java 26, WebFlux (router funcional).
+
+    Fluxo do unico endpoint, `POST /images/edit`:
+      1. recebe a foto do ambiente como parte `image` do multipart;
+      2. redimensiona o ambiente (Thumbnailator) e le a pedra do disco
+         (caminho configuravel em `marmore.openai.image.stone-path`,
+         padrao `data/granito.png`);
+      3. envia ambiente + pedra ao gateway de IA com o prompt fixo de Balcao;
+      4. devolve o resultado como stream SSE.
+
+    Autenticacao stateless por API key no header `X-API-Key`.
+  license:
+    name: Proprietario
+  contact:
+    name: marmore
+
+servers:
+  - url: http://localhost:8080
+    description: Local (padrao)
+
+tags:
+  - name: Imagem
+    description: Geracao/edicao de imagem
+
+paths:
+  /images/edit:
+    post:
+      tags: [Imagem]
+      operationId: editImage
+      summary: Edita a foto do ambiente aplicando a pedra (SSE)
+      description: |
+        Recebe a foto do ambiente e devolve, como stream Server-Sent Events
+        (`text/event-stream`), o progresso e o resultado da geracao.
+
+        **Predicados obrigatorios do router** (se ausentes, o Spring nao
+        casa a rota e devolve 404/406):
+          * `Content-Type: multipart/form-data`
+          * `Accept: text/event-stream`
+
+        **Sequencia de eventos SSE** (eventos sem nome sao do tipo default
+        `message`; o heartbeat e nomeado `ping`):
+
+        ```
+        data:{"fase":"recebido"}
+        data:{"fase":"redimensionando"}
+        data:{"fase":"gerando"}
+
+        event:ping                       # a cada 15s, ate o resultado
+        event:ping
+
+        # ramo de SUCESSO (terminal):
+        data:{"latency_ms":12345,"custo_brl":0.27,"usage":{...}}
+        data:<base64 PNG puro>           # payload cru, sem envelope JSON
+
+        # OU ramo de FALHA (terminal):
+        data:{"error":"unable to decode input image","latency_ms":120}
+        ```
+
+        O `custo_brl` e o `usage` podem ser `null` (combinacao
+        modelo/qualidade/tamanho fora da tabela de precos, ou falha da
+        cotacao USD->BRL). Nesses casos a geracao ainda e entregue com
+        sucesso; apenas o custo fica ausente.
+
+        Falhas de negocio (ex.: `OPENAI_API_KEY` ausente, imagem
+        indecodificavel, erro do gateway) NAO viram status HTTP de erro:
+        trafegam como evento SSE `error` dentro do stream 200. Apenas
+        problemas de contrato (sem a parte `image`) e de autenticacao
+        viram 400/401 fora do stream.
+
+        A pedra de referencia (`granito.png`) e lida do disco em
+        `${marmore.openai.image.stone-path}` (padrao `data/granito.png`),
+        nao enviada no multipart.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: Foto do ambiente a editar (JPG/PNG).
+            encoding:
+              image:
+                contentType: image/png, image/jpeg
+      parameters:
+        - $ref: '#/components/parameters/AcceptSse'
+      responses:
+        '200':
+          description: Stream SSE com progresso e resultado da geracao.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Stream de frames SSE. Cada frame e `event:<nome>\n` (so
+                  para `ping`) seguido de `data:<payload>\n\n`. Os demais
+                  eventos usam o tipo default `message`.
+              examples:
+                sucesso:
+                  summary: Geracao concluida
+                  value: |
+                    data:{"fase":"recebido"}
+                    data:{"fase":"redimensionando"}
+                    data:{"fase":"gerando"}
+                    event:ping
+                    data:{"latency_ms":12345,"custo_brl":0.27,"usage":{"input_tokens":1200}}
+                    data:iVBORw0KGgoAAAANSUhEUgAA...
+                falha_dominio:
+                  summary: Erro de negocio dentro do stream
+                  value: |
+                    data:{"fase":"recebido"}
+                    data:{"fase":"redimensionando"}
+                    data:{"fase":"gerando"}
+                    event:ping
+                    data:{"error":"unable to decode input image","latency_ms":120}
+        '400':
+          description: Parte `image` ausente no multipart.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "parte 'image' ausente no multipart"
+        '401':
+          description: API key ausente ou invalida no header `X-API-Key`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: API key ausente ou invalida
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Chave configurada em `marmore.api.key` (env `MARMORE_API_KEY`).
+        Comparacao constante no tempo (anti timing-attack).
+
+  parameters:
+    AcceptSse:
+      in: header
+      name: Accept
+      required: true
+      schema:
+        type: string
+        const: text/event-stream
+      description: Obrigatorio pelo predicado do router.
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Mensagem de erro amigavel.
+
+    SseStatus:
+      type: object
+      required: [fase]
+      description: Payload do evento de fase (`data:{"fase":"..."}`).
+      properties:
+        fase:
+          type: string
+          enum: [recebido, redimensionando, gerando]
+
+    SseDone:
+      type: object
+      description: Payload do evento de conclusao.
+      required: [latency_ms]
+      properties:
+        latency_ms:
+          type: integer
+          format: int64
+          description: Latencia da chamada ao gateway, em milissegundos.
+        custo_brl:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Custo em BRL (USD x cotacao). `null` se a combinacao
+            modelo/qualidade/tamanho nao estiver na tabela ou se a cotacao
+            falhar.
+        usage:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: JSON cru de `usage` retornado pelo provedor, ou `null`.
+
+    SseError:
+      type: object
+      required: [error, latency_ms]
+      description: Payload do evento de erro de negocio.
+      properties:
+        error:
+          type: string
+        latency_ms:
+          type: integer
+          format: int64
+          description: Latencia medida ate a falha, em milissegundos.
+
+    Base64Image:
+      type: string
+      format: byte
+      description: |
+        Imagem PNG resultante codificada em base64. Evento terminal enviado
+        logo apos o evento de conclusao (`done`). Payload cru, sem envelope
+        JSON.

@@ -1,0 +1,10 @@
+data:{"fase":"recebido"}
+
+data:{"fase":"redimensionando"}
+
+data:{"fase":"gerando"}
+
+event:ping
+
+data:{"error":"WebClientResponseException [200 OK]: ","latency_ms":21540}
+
