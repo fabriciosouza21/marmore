@@ -30,9 +30,9 @@ public class SecurityConfiguration {
   @Bean
   public SecurityWebFilterChain filterChain(
       ServerHttpSecurity http, ApiKeyAuthWebFilter apiKeyFilter) {
-    http.csrf(csrf -> csrf.disable())
-        .httpBasic(b -> b.disable())
-        .formLogin(f -> f.disable())
+    http.csrf(ServerHttpSecurity.CsrfSpec::disable)
+        .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
+        .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
         .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
         .addFilterAt(apiKeyFilter, SecurityWebFiltersOrder.AUTHENTICATION)
         .authorizeExchange(exchange -> exchange.anyExchange().authenticated());

@@ -45,6 +45,7 @@ public class WebClientConfig {
         .baseUrl(props.getBaseUrl())
         .defaultHeader("Authorization", "Bearer " + props.getApiKey())
         .clientConnector(new ReactorClientHttpConnector(httpClient))
+        .codecs(c -> c.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
         .build();
   }
 
