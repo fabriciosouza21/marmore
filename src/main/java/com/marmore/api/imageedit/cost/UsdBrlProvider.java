@@ -3,6 +3,7 @@ package com.marmore.api.imageedit.cost;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -26,9 +27,9 @@ import tools.jackson.databind.ObjectMapper;
  * conexao, espera por cabecalhos e leitura do corpo; curto o suficiente para o fallback entrar
  * rapido em falha.
  *
- * <p>Concorrencia do cache: o campo {@code cache} e {@code volatile} e aponta para um {@link
- * CacheEntry} imutavel. A verificacao de validade e sincrona (rapida); a busca e assincrona. A
- * escrita do cache apos uma busca bem-sucedida e atomica (ultima escrita vence). Durante a janela
+ * <p>Concorrencia do cache: o campo {@code cache} e um {@link AtomicReference} apontando para um
+ * {@link CacheEntry} imutavel. A verificacao de validade e sincrona (rapida); a busca e assincrona.
+ * A escrita do cache apos uma busca bem-sucedida e atomica (ultima escrita vence). Durante a janela
  * de raca na fronteira do TTL duas chamadas concorrentes podem disparar buscas duplicadas, mas
  * nenhuma corrupcao e possivel -- bloquear o event loop mantendo um lock sobre uma operacao
  * assincrona seria pior que a duplicacao rara.
@@ -45,7 +46,7 @@ public class UsdBrlProvider {
   private final WebClient client;
   private final UsdBrlProperties props;
 
-  private volatile CacheEntry cache;
+  private final AtomicReference<CacheEntry> cache = new AtomicReference<>();
 
   /**
    * Constroi o provedor a partir de um {@link WebClient.Builder} (nao um {@link WebClient} pronto)
@@ -61,7 +62,7 @@ public class UsdBrlProvider {
    * timeout), retorna o fallback.
    */
   public Mono<BigDecimal> currentRate() {
-    CacheEntry entry = this.cache;
+    CacheEntry entry = cache.get();
     if (entry != null && entry.isValid()) {
       return Mono.just(entry.value());
     }
@@ -72,7 +73,7 @@ public class UsdBrlProvider {
         .bodyToMono(String.class)
         .map(UsdBrlProvider::extractBid)
         .timeout(FETCH_TIMEOUT)
-        .doOnNext(value -> this.cache = new CacheEntry(value, Instant.now().plus(props.cacheTtl())))
+        .doOnNext(value -> cache.set(new CacheEntry(value, Instant.now().plus(props.cacheTtl()))))
         .onErrorResume(error -> Mono.just(props.fallback()));
   }
 
@@ -81,10 +82,10 @@ public class UsdBrlProvider {
     try {
       JsonNode root = MAPPER.readTree(body);
       JsonNode bid = root.path("USDBRL").path("bid");
-      if (bid.isMissingNode() || !bid.isTextual()) {
+      if (bid.isMissingNode() || !bid.isString()) {
         throw new IllegalStateException("USDBRL.bid ausente ou invalido: " + body);
       }
-      return new BigDecimal(bid.asText());
+      return new BigDecimal(bid.asString());
     } catch (tools.jackson.core.JacksonException e) {
       throw new IllegalStateException("JSON invalido da AwesomeAPI: " + body, e);
     }
