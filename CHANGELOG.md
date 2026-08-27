@@ -13,6 +13,15 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/).
   devolve um stream SSE (`text/event-stream`) com eventos `status`, `ping`
   (heartbeat a cada 15s), `done` (latência + custo BRL + usage) e `imagem`
   (base64) ou `error`. Autenticação por header `X-API-Key`.
+- Persistência das imagens geradas: `docker compose` local com Postgres e
+  MinIO (`compose.yaml`), upload do `.png` no bucket e metadados (data,
+  latência, custo BRL, modelo, chave do objeto) na tabela `generated_image`.
+  Falha de persistência não altera a resposta da geração.
+- Endpoints de leitura `GET /images` (lista de metadados) e
+  `GET /images/{id}/arquivo` (download do PNG), protegidos pela mesma
+  `X-API-Key`.
+- Propriedades `marmore.storage.*` (MinIO) e datasource do Spring
+  (Postgres local, H2 nos testes); `.env.example` documentando as variáveis.
 - Gateway reativo da OpenAI (`OpenAiWebClientImageEditModel`) consumindo o
   stream SSE de `/v1/images/edits` com tradução de erro-no-200 e timeout de
   leitura aplicado no Netty.
