@@ -19,10 +19,22 @@ spring:
       moderation: none
   codec:
     max-in-memory-size: 25MB
+  datasource:
+    url: jdbc:h2:mem:marmore;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
 
 marmore:
   api:
     key: chave-teste-fixa
+  storage:
+    endpoint: http://localhost:9000
+    access-key: teste
+    secret-key: teste
+    bucket: marmore-teste
   openai:
     image:
       api-key: ignored

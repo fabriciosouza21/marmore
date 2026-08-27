@@ -2,6 +2,7 @@ package com.marmore.api;
 
 import com.marmore.api.imageedit.config.ImageEditProperties;
 import com.marmore.api.imageedit.cost.UsdBrlProperties;
+import com.marmore.api.imageedit.storage.StorageProperties;
 import com.marmore.api.security.ApiKeyProperties;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
@@ -13,7 +14,8 @@ import reactor.core.publisher.Hooks;
 @EnableConfigurationProperties({
   ImageEditProperties.class,
   ApiKeyProperties.class,
-  UsdBrlProperties.class
+  UsdBrlProperties.class,
+  StorageProperties.class
 })
 @SpringBootApplication
 public class ApiApplication {

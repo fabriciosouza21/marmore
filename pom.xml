@@ -55,6 +55,11 @@
 			<artifactId>thumbnailator</artifactId>
 			<version>0.4.21</version>
 		</dependency>
+		<dependency>
+			<groupId>io.minio</groupId>
+			<artifactId>minio</artifactId>
+			<version>8.5.17</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.postgresql</groupId>

@@ -14,10 +14,22 @@ spring:
       moderation: none
   codec:
     max-in-memory-size: 25MB
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/marmore}
+    username: ${POSTGRES_USER:marmore}
+    password: ${POSTGRES_PASSWORD:marmore}
+  jpa:
+    hibernate:
+      ddl-auto: update
 
 marmore:
   api:
     key: ${MARMORE_API_KEY:}
+  storage:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ROOT_USER:marmore}
+    secret-key: ${MINIO_ROOT_PASSWORD:marmore123}
+    bucket: ${MINIO_BUCKET:marmore-imagens-geradas}
   openai:
     image:
       base-url: https://api.openai.com
