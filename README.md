@@ -13,27 +13,18 @@ API do projeto marmore, construída com Spring Boot 4.1 e Java 26.
 git clone git@github.com:fabriciosouza21/marmore.git
 cd marmore/api
 ./setup.sh                 # ativa o hook pre-commit
-cp .env.example .env       # e preencha OPENAI_API_KEY
+cp .env.example .env       # e preencha as credenciais
 source ./load-env.sh       # carrega variáveis no shell atual (repita a cada sessão)
 ```
 
 ## Infraestrutura local
 
-O `docker compose` na raiz sobe Postgres e MinIO com um comando:
-
-```bash
-docker compose up -d
-```
-
-| Serviço | Porta | Uso |
-|---------|-------|-----|
-| Postgres | 5432 | metadados das gerações (tabela `generated_image`) |
-| MinIO S3 | 9000 (API), 9001 (console) | imagens `.png` no bucket `marmore-imagens-geradas` |
-
-As credenciais vêm do `.env` (template em `.env.example`); os defaults de dev
-funcionam sem configuração extra. O bucket é criado automaticamente pelo
-serviço `minio-init`. Os dados persistem em volumes: `docker compose down`
-mantém, `down -v` apaga.
+A infra de containers (Postgres e MinIO) é gerenciada pelo **Portainer**
+([https://localhost:9443](https://localhost:9443)), a partir da pasta `deploy/`
+do workspace: stack `banco` (Postgres compartilhado entre aplicações, banco
+`marmore`) e stack `marmore` (MinIO das imagens). As credenciais estão no
+`.env` (template em `.env.example`). Detalhes e script de deploy em
+`deploy/README.md`.
 
 ## Configuração
 
