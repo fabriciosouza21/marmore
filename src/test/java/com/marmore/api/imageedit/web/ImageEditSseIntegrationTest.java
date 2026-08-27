@@ -1,6 +1,9 @@
 package com.marmore.api.imageedit.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.marmore.api.imageedit.TestImages;
 import com.marmore.api.imageedit.ai.Image;
@@ -10,11 +13,18 @@ import com.marmore.api.imageedit.ai.ImageResponse;
 import com.marmore.api.imageedit.ai.ImageResponseMetadata;
 import com.marmore.api.imageedit.cost.UsdBrlProperties;
 import com.marmore.api.imageedit.cost.UsdBrlProvider;
+import com.marmore.api.imageedit.storage.GeneratedImage;
+import com.marmore.api.imageedit.storage.GeneratedImageRepository;
+import com.marmore.api.imageedit.storage.ImageObjectStorage;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -47,6 +57,10 @@ import tools.jackson.databind.JsonNode;
  * AwesomeAPI). O {@code stone-path} e apontado para um recurso de teste (PNG minimal) via {@link
  * DynamicPropertySource}, mantendo o {@code data/} do repositorio limpo.
  *
+ * <p>O {@link ImageObjectStorage} e o {@link GeneratedImageRepository} tambem sao mockados via
+ * {@code @Primary}, tornando o fluxo de persistencia hermetico (sem MinIO nem H2 real) e permitindo
+ * verificar {@code salvar} e {@code save}.
+ *
  * <p>O {@link WebTestClient} e construido manualmente apontando para a porta aleatoria do servidor
  * embutido (Spring Boot 4.1 nao registra mais um bean {@link WebTestClient} automaticamente), com
  * timeout ampliado para a leitura do stream SSE.
@@ -68,6 +82,10 @@ class ImageEditSseIntegrationTest {
   private static final Duration VERIFICACAO_TIMEOUT = Duration.ofSeconds(30);
 
   @LocalServerPort private int porta;
+
+  @Autowired private ImageObjectStorage storage;
+
+  @Autowired private GeneratedImageRepository repository;
 
   /**
    * Aponta {@code marmore.openai.image.stone-path} para um PNG minimal em {@code
@@ -125,6 +143,48 @@ class ImageEditSseIntegrationTest {
         .assertNext(corpo -> assertThat(corpo).contains("\"latency_ms\"").contains("\"custo_brl\""))
         .assertNext(corpo -> assertThat(corpo).isEqualTo(B64_FIXO))
         .verifyComplete();
+  }
+
+  @DisplayName("sucesso: bytes decodados vão ao storage e metadados vão ao repositório")
+  @Test
+  void sseConcluidoPersisteImagemComStorageRepositorio() throws Exception {
+    Mockito.reset(storage, repository);
+    when(storage.salvar(any())).thenReturn(Mono.just("imagens/sse-teste.png"));
+    when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    byte[] ambiente = TestImages.ambiente();
+
+    var responseBody =
+        cliente()
+            .post()
+            .uri("/images/edit")
+            .header("X-API-Key", API_KEY_VALIDA)
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .contentType(MediaType.MULTIPART_FORM_DATA)
+            .body(BodyInserters.fromMultipartData(multipartAmbiente(ambiente)))
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectHeader()
+            .contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+            .returnResult(String.class)
+            .getResponseBody();
+
+    StepVerifier.create(responseBody)
+        .assertNext(corpo -> assertThat(corpo).contains("\"fase\":\"recebido\""))
+        .assertNext(corpo -> assertThat(corpo).contains("\"fase\":\"redimensionando\""))
+        .assertNext(corpo -> assertThat(corpo).contains("\"fase\":\"gerando\""))
+        .assertNext(corpo -> assertThat(corpo).contains("\"latency_ms\"").contains("\"custo_brl\""))
+        .assertNext(corpo -> assertThat(corpo).isEqualTo(B64_FIXO))
+        .verifyComplete();
+
+    verify(storage).salvar(Base64.getDecoder().decode(B64_FIXO));
+    var captor = ArgumentCaptor.forClass(GeneratedImage.class);
+    verify(repository).save(captor.capture());
+    GeneratedImage salva = captor.getValue();
+    assertThat(salva.getObjetoKey()).isEqualTo("imagens/sse-teste.png");
+    assertThat(salva.getModelo()).isEqualTo("gpt-image-2");
+    assertThat(salva.getCriadoEm()).isNotNull();
   }
 
   @DisplayName("sem header X-API-Key -> 401 Unauthorized")
@@ -192,6 +252,22 @@ class ImageEditSseIntegrationTest {
           return Mono.just(new BigDecimal("5.00"));
         }
       };
+    }
+
+    /** Storage de objetos mockado: devolve key fixa, sem tocar no MinIO local de dev. */
+    @Bean
+    @Primary
+    ImageObjectStorage mockImageObjectStorage() {
+      ImageObjectStorage storage = Mockito.mock(ImageObjectStorage.class);
+      when(storage.salvar(any())).thenReturn(Mono.just("imagens/sse-teste.png"));
+      return storage;
+    }
+
+    /** Repositorio JPA mockado: save devolve a propria entidade, sem tocar no H2. */
+    @Bean
+    @Primary
+    GeneratedImageRepository mockGeneratedImageRepository() {
+      return Mockito.mock(GeneratedImageRepository.class);
     }
   }
 }
