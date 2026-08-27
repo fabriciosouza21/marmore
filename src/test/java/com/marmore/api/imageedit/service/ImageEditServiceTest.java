@@ -218,6 +218,32 @@ class ImageEditServiceTest {
     assertThat(salva.getCriadoEm()).isNotNull();
   }
 
+  @DisplayName("falha no storage nao quebra o fluxo: retorna Ok e nao grava no repositorio")
+  @Test
+  void falhaNoStorageMantemOkSemChamarRepositorio() throws Exception {
+    when(storage.salvar(any())).thenReturn(monoError(new IllegalStateException("storage fora")));
+    when(model.call(any())).thenReturn(monoJust(respostaComB64("aA==")));
+
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
+
+    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
+    assertThat(((GenerateResult.Ok) result).b64()).isEqualTo("aA==");
+    verify(repository, never()).save(any());
+  }
+
+  @DisplayName("falha no repositorio nao quebra o fluxo: retorna Ok apos bytes irem ao storage")
+  @Test
+  void falhaNoRepositorioMantemOkComBytesNoStorage() throws Exception {
+    when(repository.save(any())).thenThrow(new IllegalStateException("banco fora"));
+    when(model.call(any())).thenReturn(monoJust(respostaComB64("aA==")));
+
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
+
+    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
+    assertThat(((GenerateResult.Ok) result).b64()).isEqualTo("aA==");
+    verify(storage).salvar(any());
+  }
+
   private static reactor.core.publisher.Mono<BigDecimal> monoJust(BigDecimal v) {
     return reactor.core.publisher.Mono.just(v);
   }
