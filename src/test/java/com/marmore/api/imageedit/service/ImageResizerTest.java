@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.Optional;
 import java.util.Random;
 import javax.imageio.ImageIO;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** Testes de {@link ImageResizer}. */
@@ -53,6 +54,16 @@ class ImageResizerTest {
   @Test
   void entradaInvalidaDevolveEmptySemLancar() {
     Optional<byte[]> saidaOpt = resizer.resize(new byte[] {1, 2, 3, 4});
+
+    assertThat(saidaOpt).isEmpty();
+  }
+
+  @DisplayName("rejeita imagem com dimensao acima do limite sem decodificar o raster (anti-bomba)")
+  @Test
+  void rejeitaImagemComDimensaoAcimaDoLimite() throws Exception {
+    byte[] entrada = gerarPngRbg(4200, 2000);
+
+    Optional<byte[]> saidaOpt = resizer.resize(entrada);
 
     assertThat(saidaOpt).isEmpty();
   }

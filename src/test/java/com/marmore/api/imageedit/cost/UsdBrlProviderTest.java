@@ -66,6 +66,21 @@ class UsdBrlProviderTest {
     assertThat(rate).isEqualByComparingTo(new BigDecimal("5.1075"));
   }
 
+  @DisplayName("em erro, cacheia o fallback por um TTL curto (sem refazer durante outage)")
+  @Test
+  void naoRefazAposErroDentroDoTtlNegativo() {
+    server.enqueue(new MockResponse().setResponseCode(500).setBody("boom"));
+
+    BigDecimal first = provider.currentRate().block();
+    BigDecimal second = provider.currentRate().block();
+
+    assertThat(first).isEqualByComparingTo(new BigDecimal("5.1075"));
+    assertThat(second).isEqualByComparingTo(new BigDecimal("5.1075"));
+    assertThat(server.getRequestCount())
+        .as("segunda chamada usa o fallback em cache, sem bater na API")
+        .isEqualTo(1);
+  }
+
   @DisplayName("nao refaz a chamada antes do TTL expirar (retorna valor em cache)")
   @Test
   void naoRefazAntesDoTtlExpirar() {

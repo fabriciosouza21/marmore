@@ -10,12 +10,11 @@ import org.junit.jupiter.api.Test;
 class GenerateResultTest {
 
   @Test
-  void okCarregaBase64LatenciaRawCusto() {
-    GenerateResult.Ok ok = new GenerateResult.Ok("b64abc", null, null, 42L, null);
+  void okCarregaBase64LatenciaCusto() {
+    GenerateResult.Ok ok = new GenerateResult.Ok("b64abc", null, 42L, null);
 
     assertThat(ok.b64()).isEqualTo("b64abc");
     assertThat(ok.latencyMs()).isEqualTo(42L);
-    assertThat(ok.raw()).isNull();
     assertThat(ok.usage()).isNull();
     assertThat(ok.cost()).isNull();
   }
@@ -30,7 +29,7 @@ class GenerateResultTest {
 
   @Test
   void instanciasOkErrImplementamGerarResultado() {
-    GenerateResult ok = new GenerateResult.Ok("x", null, null, 1L, null);
+    GenerateResult ok = new GenerateResult.Ok("x", null, 1L, null);
     GenerateResult err = new GenerateResult.Err("y", 2L);
 
     assertThat(ok).isInstanceOf(GenerateResult.class);
@@ -40,14 +39,10 @@ class GenerateResultTest {
   @DisplayName("custoBrl retorna BRL do cost ou empty quando cost e nulo")
   @Test
   void custoBrlRetornaBrlOuEmpty() {
-    GenerateResult.Ok semCusto = new GenerateResult.Ok("x", null, null, 1L, null);
+    GenerateResult.Ok semCusto = new GenerateResult.Ok("x", null, 1L, null);
     GenerateResult.Ok comCusto =
         new GenerateResult.Ok(
-            "x",
-            null,
-            null,
-            1L,
-            new ImageCost(new BigDecimal("0.01"), new BigDecimal("0.05"), null));
+            "x", null, 1L, new ImageCost(new BigDecimal("0.01"), new BigDecimal("0.05")));
 
     assertThat(semCusto.custoBrl()).isEmpty();
     assertThat(comCusto.custoBrl()).hasValue(new BigDecimal("0.05"));

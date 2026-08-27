@@ -26,7 +26,8 @@ class WebClientConfigTest {
           .withPropertyValues(
               "marmore.openai.image.base-url=https://example.test",
               "marmore.openai.image.api-key=chave-teste",
-              "marmore.openai.image.timeout=5s");
+              "marmore.openai.image.timeout=5s",
+              "marmore.openai.image.stone-path=/tmp/pedra.png");
 
   @DisplayName("bean imageWebClient e construido com properties validas")
   @Test

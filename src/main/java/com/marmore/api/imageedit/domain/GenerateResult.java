@@ -16,10 +16,10 @@ import tools.jackson.databind.JsonNode;
 public sealed interface GenerateResult permits GenerateResult.Ok, GenerateResult.Err {
 
   /**
-   * Resultado de sucesso: imagem em base64, JSON cru, uso de tokens, latencia e custo computado (ou
-   * {@code null}).
+   * Resultado de sucesso: imagem em base64, uso de tokens, latencia e custo computado (ou {@code
+   * null}).
    */
-  record Ok(String b64, JsonNode raw, JsonNode usage, long latencyMs, @Nullable ImageCost cost)
+  record Ok(String b64, @Nullable JsonNode usage, long latencyMs, @Nullable ImageCost cost)
       implements GenerateResult {
 
     /** Retorna o custo em BRL, ou empty quando o custo nao foi computado. */

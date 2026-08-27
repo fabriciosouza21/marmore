@@ -155,7 +155,7 @@ class ImageEditHandlerTest {
 
   private static GenerateResult.Ok okResult() {
     JsonNode usage = MAPPER.createObjectNode().put("total_tokens", 100);
-    return new GenerateResult.Ok("aGVsbG8=", null, usage, 200L, null);
+    return new GenerateResult.Ok("aGVsbG8=", usage, 200L, null);
   }
 
   private static DataBuffer bufferDe(byte[] bytes) {

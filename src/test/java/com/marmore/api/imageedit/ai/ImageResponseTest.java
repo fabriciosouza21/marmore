@@ -17,7 +17,7 @@ class ImageResponseTest {
     List<ImageGeneration> input = new java.util.ArrayList<>();
     input.add(gen);
 
-    ImageResponse resp = new ImageResponse(input, ImageResponseMetadata.empty(), null);
+    ImageResponse resp = new ImageResponse(input, ImageResponseMetadata.empty());
 
     input.clear();
     assertThat(resp.results()).hasSize(1);
@@ -27,8 +27,8 @@ class ImageResponseTest {
   @DisplayName("getResult retorna a primeira geracao ou empty se vazia")
   void getResultRetornaPrimeiraOuEmpty() {
     ImageGeneration gen = ImageGeneration.of(Image.of("aA=="));
-    ImageResponse comGen = new ImageResponse(List.of(gen), ImageResponseMetadata.empty(), null);
-    ImageResponse vazia = new ImageResponse(List.of(), ImageResponseMetadata.empty(), null);
+    ImageResponse comGen = new ImageResponse(List.of(gen), ImageResponseMetadata.empty());
+    ImageResponse vazia = new ImageResponse(List.of(), ImageResponseMetadata.empty());
 
     assertThat(comGen.getResult()).hasValue(gen);
     assertThat(vazia.getResult()).isEmpty();
@@ -39,23 +39,10 @@ class ImageResponseTest {
   void resultsEhImutavel() {
     ImageResponse resp =
         new ImageResponse(
-            List.of(ImageGeneration.of(Image.of("aA=="))), ImageResponseMetadata.empty(), null);
+            List.of(ImageGeneration.of(Image.of("aA=="))), ImageResponseMetadata.empty());
 
     assertThatThrownBy(() -> resp.results().add(ImageGeneration.of(Image.of("bA=="))))
         .isInstanceOf(UnsupportedOperationException.class);
-  }
-
-  @Test
-  @DisplayName("raw e propagado para camadas superiores persistirem o JSON integral")
-  void rawPropagadoParaCamadasSuperiores() {
-    tools.jackson.databind.JsonNode node =
-        tools.jackson.databind.json.JsonMapper.builder().build().createArrayNode();
-
-    ImageResponse resp =
-        new ImageResponse(
-            List.of(ImageGeneration.of(Image.of("aA=="))), ImageResponseMetadata.empty(), node);
-
-    assertThat(resp.raw()).isSameAs(node);
   }
 
   @Test

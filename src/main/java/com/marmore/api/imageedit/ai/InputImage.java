@@ -1,7 +1,6 @@
 package com.marmore.api.imageedit.ai;
 
 import java.util.Arrays;
-import org.jetbrains.annotations.NotNull;
 
 /**
  * Imagem binaria de entrada para edicao. Conceito ausente no Spring AI, cuja {@code ImageMessage}
@@ -44,14 +43,7 @@ public record InputImage(byte[] bytes, String filename) {
   }
 
   @Override
-  @NotNull
   public String toString() {
-    return "InputImage{"
-        + "bytes="
-        + Arrays.toString(bytes)
-        + ", filename='"
-        + filename
-        + '\''
-        + '}';
+    return "InputImage{bytes=<%d bytes>, filename='%s'}".formatted(bytes.length, filename);
   }
 }

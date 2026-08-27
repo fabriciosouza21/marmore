@@ -5,31 +5,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
-/** Testes de {@link ImageCost}: carrega os tres valores (USD, BRL, usage) sem logica. */
+/** Testes de {@link ImageCost}: carrega os valores em moeda (USD, BRL) sem logica. */
 class ImageCostTest {
 
-  @DisplayName("mantém os valores passados (USD, BRL e usage não nulo)")
+  @DisplayName("mantem os valores passados (USD e BRL)")
   @Test
   void mantemValoresPassados() {
     BigDecimal usd = new BigDecimal("0.04");
     BigDecimal brl = new BigDecimal("0.22");
-    JsonNode usage = JsonMapper.builder().build().createObjectNode().put("prompt_tokens", 10);
 
-    ImageCost cost = new ImageCost(usd, brl, usage);
+    ImageCost cost = new ImageCost(usd, brl);
 
     assertThat(cost.costUsd()).isEqualByComparingTo(usd);
     assertThat(cost.costBrl()).isEqualByComparingTo(brl);
-    assertThat(cost.usage()).isSameAs(usage);
-  }
-
-  @DisplayName("aceita usage nulo (provedor pode não retornar usage)")
-  @Test
-  void aceitaUsageNulo() {
-    ImageCost cost = new ImageCost(new BigDecimal("0.04"), new BigDecimal("0.22"), null);
-
-    assertThat(cost.usage()).isNull();
   }
 }

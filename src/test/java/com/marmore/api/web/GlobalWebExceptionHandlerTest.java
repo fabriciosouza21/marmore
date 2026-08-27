@@ -2,12 +2,10 @@ package com.marmore.api.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.marmore.api.imageedit.web.ImageEditException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ResponseStatusException;
@@ -21,10 +19,9 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>Cobertura:
  *
  * <ul>
- *   <li>{@link ImageEditException} -> status embutido + mensagem (criterio de aceite).
  *   <li>Excecao generica -> 500 + mensagem generica (criterio de aceite).
  *   <li>{@link ResponseStatusException} -> status da excecao.
- *   <li>Escapamento de aspas (JSON valido).
+ *   <li>Status HTTP nao-padrao (sem {@code HttpStatus} resolvido) nao derruba o handler com NPE.
  *   <li>Contrato: implementa {@link WebExceptionHandler} e tem order negativa (rodar antes do
  *       {@code ResponseStatusExceptionHandler} padrao).
  * </ul>
@@ -41,21 +38,6 @@ class GlobalWebExceptionHandlerTest {
 
   private static String body(MockServerWebExchange exchange) {
     return exchange.getResponse().getBodyAsString().block();
-  }
-
-  @DisplayName("ImageEditException devolve o status embutido na excecao")
-  @Test
-  void imageEditExceptionDevolveStatusEmbutido() {
-    ImageEditException ex = new ImageEditException(HttpStatus.SERVICE_UNAVAILABLE, "upstream down");
-    MockServerWebExchange exchange = exchange();
-
-    StepVerifier.create(handler.handle(exchange, ex)).verifyComplete();
-
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-    assertThat(exchange.getResponse().getHeaders().getContentType())
-        .isNotNull()
-        .satisfies(ct -> assertThat(ct.isCompatibleWith(MediaType.APPLICATION_JSON)).isTrue());
-    assertThat(body(exchange)).isEqualTo("{\"error\":\"upstream down\"}");
   }
 
   @DisplayName("excecao generica devolve 500 com mensagem generica")
@@ -82,11 +64,26 @@ class GlobalWebExceptionHandlerTest {
     assertThat(body(exchange)).isEqualTo("{\"error\":\"conflito\"}");
   }
 
+  @DisplayName("status HTTP nao-padrao (sem reason resolvido) nao lanca NPE no handler")
+  @Test
+  @SuppressWarnings("checkstyle:AbbreviationAsWordInName")
+  void statusNaoPadraoNaoLancaNpe() {
+    ResponseStatusException ex =
+        new ResponseStatusException(org.springframework.http.HttpStatusCode.valueOf(599));
+    MockServerWebExchange exchange = exchange();
+
+    StepVerifier.create(handler.handle(exchange, ex)).verifyComplete();
+
+    assertThat(exchange.getResponse().getStatusCode().value()).isEqualTo(599);
+    assertThat(body(exchange)).startsWith("{\"error\":");
+  }
+
   @DisplayName("mensagem com aspas e escapada e produz JSON valido")
   @Test
   @SuppressWarnings("checkstyle:AbbreviationAsWordInName")
   void mensagemComAspasEscapadaValida() {
-    ImageEditException ex = new ImageEditException(HttpStatus.BAD_REQUEST, "campo \"x\" invalido");
+    ResponseStatusException ex =
+        new ResponseStatusException(HttpStatus.BAD_REQUEST, "campo \"x\" invalido");
     MockServerWebExchange exchange = exchange();
 
     StepVerifier.create(handler.handle(exchange, ex)).verifyComplete();

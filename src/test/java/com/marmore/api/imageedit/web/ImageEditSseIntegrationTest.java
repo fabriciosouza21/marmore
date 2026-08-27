@@ -159,8 +159,7 @@ class ImageEditSseIntegrationTest {
               "{\"data\":[{\"b64_json\":\"" + B64_FIXO + "\"}],\"usage\":{\"total_tokens\":100}}");
       return new ImageResponse(
           List.of(ImageGeneration.of(Image.of(B64_FIXO))),
-          new ImageResponseMetadata(raw.get("usage")),
-          raw);
+          new ImageResponseMetadata(raw.get("usage")));
     } catch (Exception e) {
       throw new IllegalStateException("falha ao montar ImageResponse mockada", e);
     }

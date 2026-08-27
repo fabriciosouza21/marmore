@@ -195,7 +195,7 @@ public class OpenAiWebClientImageEditModel implements ImageEditModel {
     List<ImageGeneration> generations = new ArrayList<>();
     generations.add(ImageGeneration.of(Image.of(b64)));
     JsonNode usage = node.has("usage") ? node.get("usage") : null;
-    return new ImageResponse(generations, new ImageResponseMetadata(usage), node);
+    return new ImageResponse(generations, new ImageResponseMetadata(usage));
   }
 
   // ---------------------------------------------------------------------

@@ -43,6 +43,13 @@ public class UsdBrlProvider {
   /** Timeout aplicado a busca da cotacao via {@link Mono#timeout(Duration)}. */
   private static final Duration FETCH_TIMEOUT = Duration.ofSeconds(5);
 
+  /**
+   * TTL do cache negativo: por quanto tempo o fallback fica cacheado apos uma falha da API. Curto o
+   * suficiente para a API ser retentada logo, longo o suficiente para nao bater nela a cada request
+   * durante uma outage (evita pagar o {@link #FETCH_TIMEOUT} integral em cada chamada).
+   */
+  private static final Duration NEGATIVE_TTL = Duration.ofSeconds(30);
+
   private final WebClient client;
   private final UsdBrlProperties props;
 
@@ -74,7 +81,11 @@ public class UsdBrlProvider {
         .map(UsdBrlProvider::extractBid)
         .timeout(FETCH_TIMEOUT)
         .doOnNext(value -> cache.set(new CacheEntry(value, Instant.now().plus(props.cacheTtl()))))
-        .onErrorResume(error -> Mono.just(props.fallback()));
+        .onErrorResume(
+            error -> {
+              cache.set(new CacheEntry(props.fallback(), Instant.now().plus(NEGATIVE_TTL)));
+              return Mono.just(props.fallback());
+            });
   }
 
   /** Extrai o campo {@code USDBRL.bid} do JSON da AwesomeAPI como {@link BigDecimal}. */

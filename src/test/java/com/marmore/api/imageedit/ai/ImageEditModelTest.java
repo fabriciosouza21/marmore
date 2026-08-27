@@ -45,6 +45,6 @@ class ImageEditModelTest {
 
   private static ImageResponse respostaFixa() {
     return new ImageResponse(
-        List.of(ImageGeneration.of(Image.of("aA=="))), ImageResponseMetadata.empty(), null);
+        List.of(ImageGeneration.of(Image.of("aA=="))), ImageResponseMetadata.empty());
   }
 }

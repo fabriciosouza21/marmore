@@ -1,6 +1,5 @@
 package com.marmore.api.web;
 
-import com.marmore.api.imageedit.web.ImageEditException;
 import java.nio.charset.StandardCharsets;
 import org.jspecify.annotations.Nullable;
 import org.springframework.core.Ordered;
@@ -24,7 +23,6 @@ import tools.jackson.databind.ObjectMapper;
  * JSON {@code {"error":"..."}} preservando a semantica de status:
  *
  * <ul>
- *   <li>{@link ImageEditException} -> status embutido na excecao (dominio).
  *   <li>{@link ResponseStatusException} e {@link ErrorResponseException} -> {@link
  *       ErrorResponseException#getStatusCode()}.
  *   <li>Qualquer outra -> {@link HttpStatus#INTERNAL_SERVER_ERROR} com mensagem generica ("erro
@@ -67,9 +65,6 @@ public class GlobalWebExceptionHandler implements WebExceptionHandler, Ordered {
 
   @Override
   public Mono<Void> handle(ServerWebExchange exchange, Throwable ex) {
-    if (ex instanceof ImageEditException iee) {
-      return responder(exchange, iee.getStatus(), iee.getMessage());
-    }
     if (ex instanceof ResponseStatusException rse) {
       return responder(exchange, rse.getStatusCode(), rse.getReason());
     }
@@ -95,8 +90,11 @@ public class GlobalWebExceptionHandler implements WebExceptionHandler, Ordered {
    */
   private Mono<Void> responder(
       ServerWebExchange exchange, HttpStatusCode status, @Nullable String mensagem) {
+    HttpStatus resolvido = HttpStatus.resolve(status.value());
     String texto =
-        mensagem != null ? mensagem : HttpStatus.resolve(status.value()).getReasonPhrase();
+        mensagem != null
+            ? mensagem
+            : (resolvido != null ? resolvido.getReasonPhrase() : "erro " + status.value());
     byte[] corpo = jsonError(texto);
     return escrever(exchange, status, corpo);
   }

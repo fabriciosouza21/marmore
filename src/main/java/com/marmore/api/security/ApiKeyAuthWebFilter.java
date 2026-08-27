@@ -55,10 +55,24 @@ public class ApiKeyAuthWebFilter implements WebFilter {
   }
 
   private static boolean chaveConfere(@Nullable String fornecida, @Nullable String esperada) {
-    return fornecida != null
-        && esperada != null
-        && MessageDigest.isEqual(
-            fornecida.getBytes(StandardCharsets.UTF_8), esperada.getBytes(StandardCharsets.UTF_8));
+    if (fornecida == null || esperada == null) {
+      return false;
+    }
+    return MessageDigest.isEqual(sha256(fornecida), sha256(esperada));
+  }
+
+  /**
+   * Hash SHA-256 dos bytes da chave em UTF-8. Garante que ambas as entradas cheguem a {@link
+   * MessageDigest#isEqual} com o mesmo tamanho (32 bytes), eliminando o oracle de tempo que vaza o
+   * comprimento da chave quando os tamanhos diferem.
+   */
+  private static byte[] sha256(String valor) {
+    try {
+      MessageDigest md = MessageDigest.getInstance("SHA-256");
+      return md.digest(valor.getBytes(StandardCharsets.UTF_8));
+    } catch (java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 indisponivel na JVM", e);
+    }
   }
 
   private static Mono<Void> rejeitar(ServerWebExchange exchange) {

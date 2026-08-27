@@ -25,6 +25,7 @@ marmore:
     key: chave-teste-fixa
   openai:
     image:
+      api-key: ignored
       stone-path: ${user.dir}/data/granito.png
   cost:
     usd-brl:

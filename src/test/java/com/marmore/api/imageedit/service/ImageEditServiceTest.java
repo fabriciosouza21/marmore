@@ -62,7 +62,6 @@ class ImageEditServiceTest {
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     GenerateResult.Ok ok = (GenerateResult.Ok) result;
     assertThat(ok.b64()).isEqualTo("aGVsbG8=");
-    assertThat(ok.raw()).isNotNull();
     assertThat(ok.usage()).isNotNull();
     assertThat(ok.cost()).as("custo computado").isNotNull();
     assertThat(ok.cost().costUsd()).isEqualByComparingTo(new BigDecimal("0.006"));
@@ -70,7 +69,7 @@ class ImageEditServiceTest {
     assertThat(ok.latencyMs()).isGreaterThanOrEqualTo(0L);
   }
 
-  @DisplayName("apiKey ausente -> Err sem chamar o gateway")
+  @DisplayName("apiKey ausente -> Err generico sem vazar nome de variavel de ambiente")
   @Test
   void erroQuandoApiKeyVaziaSemChamarGateway() throws Exception {
     props.setApiKey("");
@@ -78,11 +77,13 @@ class ImageEditServiceTest {
     GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
-    assertThat(((GenerateResult.Err) result).error()).startsWith("OPENAI_API_KEY");
+    String msg = ((GenerateResult.Err) result).error();
+    assertThat(msg).doesNotContain("OPENAI_API_KEY");
+    assertThat(msg).isEqualTo("falha na geracao da imagem");
     verify(model, never()).call(any());
   }
 
-  @DisplayName("pedra (stone-path) inexistente -> Err sem chamar o gateway")
+  @DisplayName("pedra (stone-path) inexistente -> Err generico sem vazar path absoluto")
   @Test
   void erroQuandoPedraAusenteSemChamarGateway() throws Exception {
     props.setStonePath(Paths.get("/tmp/arquivo-que-nao-existe.png"));
@@ -90,32 +91,57 @@ class ImageEditServiceTest {
     GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
-    assertThat(((GenerateResult.Err) result).error()).startsWith("stone image not found");
+    String msg = ((GenerateResult.Err) result).error();
+    assertThat(msg).doesNotContain("stone");
+    assertThat(msg).doesNotContain("/tmp/");
+    assertThat(msg).isEqualTo("falha na geracao da imagem");
     verify(model, never()).call(any());
   }
 
-  @DisplayName("ambiente indecodificavel -> Err sem chamar o gateway")
+  @DisplayName("stone-path nulo -> Err (nao lanca; contrato never-throws)")
+  @Test
+  void erroQuandoStonePathNuloRetornaErrSemLancar() throws Exception {
+    props.setStonePath(null);
+
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
+
+    assertThat(result).isInstanceOf(GenerateResult.Err.class);
+    assertThat(((GenerateResult.Err) result).error()).isEqualTo("falha na geracao da imagem");
+    verify(model, never()).call(any());
+  }
+
+  @DisplayName("ambiente indecodificavel -> Err de entrada invalida")
   @Test
   void erroQuandoImagemIndecodificavelSemChamarGateway() {
     GenerateResult result = service.generate(new byte[] {1, 2, 3, 4}).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
-    assertThat(((GenerateResult.Err) result).error()).startsWith("unable to decode input image");
+    String msg = ((GenerateResult.Err) result).error();
+    assertThat(msg).isEqualTo("imagem de entrada invalida ou ilegivel");
     verify(model, never()).call(any());
   }
 
-  @DisplayName("gateway lanca AiImageException -> Err com a mensagem da excecao")
+  @DisplayName("gateway lanca excecao com URL/classe interna -> Err generico sem vazar detalhe")
   @Test
-  void erroQuandoGatewayLancaAiImageException() throws Exception {
-    when(model.call(any())).thenReturn(monoError(new AiImageException("[400]: bad model")));
+  void erroQuandoGatewayLancaNaoVazaDetalheInterno() throws Exception {
+    when(model.call(any()))
+        .thenReturn(
+            monoError(
+                new AiImageException(
+                    "WebClientResponseException$BadRequest: 400 from POST"
+                        + " https://api.openai.com/v1/images/edits")));
 
     GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
-    assertThat(((GenerateResult.Err) result).error()).contains("400").contains("bad model");
+    String msg = ((GenerateResult.Err) result).error();
+    assertThat(msg).doesNotContain("openai.com");
+    assertThat(msg).doesNotContain("WebClientResponseException");
+    assertThat(msg).doesNotContain("400");
+    assertThat(msg).isEqualTo("falha na geracao da imagem");
   }
 
-  @DisplayName("resposta sem b64_json -> Err")
+  @DisplayName("resposta sem b64_json -> Err generico")
   @Test
   void erroQuandoRespostaSemB64() throws Exception {
     when(model.call(any())).thenReturn(monoJust(respostaSemB64()));
@@ -123,7 +149,7 @@ class ImageEditServiceTest {
     GenerateResult result = service.generate(TestImages.ambiente()).block();
 
     assertThat(result).isInstanceOf(GenerateResult.Err.class);
-    assertThat(((GenerateResult.Err) result).error()).startsWith("resposta sem b64_json");
+    assertThat(((GenerateResult.Err) result).error()).isEqualTo("falha na geracao da imagem");
   }
 
   @DisplayName("prompt enviado ao gateway tem duas imagens (ambiente, pedra) e prompt fixo")
@@ -171,15 +197,11 @@ class ImageEditServiceTest {
     var mapper = JsonMapper.builder().build();
     var raw = mapper.readTree("{\"data\":[{\"b64_json\":\"" + b64 + "\"}],\"usage\":{}}");
     return new ImageResponse(
-        List.of(ImageGeneration.of(Image.of(b64))),
-        new ImageResponseMetadata(raw.get("usage")),
-        raw);
+        List.of(ImageGeneration.of(Image.of(b64))), new ImageResponseMetadata(raw.get("usage")));
   }
 
   private static ImageResponse respostaSemB64() throws Exception {
-    var mapper = JsonMapper.builder().build();
-    var raw = mapper.readTree("{\"data\":[{}]}");
     return new ImageResponse(
-        List.of(ImageGeneration.of(Image.of(null))), new ImageResponseMetadata(null), raw);
+        List.of(ImageGeneration.of(Image.of(null))), ImageResponseMetadata.empty());
   }
 }

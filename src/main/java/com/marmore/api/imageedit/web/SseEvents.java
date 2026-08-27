@@ -2,6 +2,7 @@ package com.marmore.api.imageedit.web;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.math.BigDecimal;
+import org.jspecify.annotations.Nullable;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -63,7 +64,8 @@ public class SseEvents {
    * @param custoBrl custo em BRL (BigDecimal preserva escala)
    * @param usage JSON cru de usage retornado pelo provedor, ou {@code null}
    */
-  public ServerSentEvent<Object> done(long latencyMs, BigDecimal custoBrl, JsonNode usage) {
+  public ServerSentEvent<Object> done(
+      long latencyMs, @Nullable BigDecimal custoBrl, @Nullable JsonNode usage) {
     return ServerSentEvent.builder()
         .data(toJson(new DonePayload(latencyMs, custoBrl, usage)))
         .build();

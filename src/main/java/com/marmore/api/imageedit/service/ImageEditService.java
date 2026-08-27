@@ -17,7 +17,8 @@ import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -46,6 +47,14 @@ import reactor.core.scheduler.Schedulers;
 @Service
 public class ImageEditService {
 
+  private static final Logger log = LoggerFactory.getLogger(ImageEditService.class);
+
+  /** Mensagem generica para falhas de configuracao/gateway/upstream: nao vaza detalhe interno. */
+  static final String MSG_FALHA_GERACAO = "falha na geracao da imagem";
+
+  /** Mensagem para entrada indecodificavel: acionavel pelo cliente, sem detalhe interno. */
+  static final String MSG_ENTRADA_INVALIDA = "imagem de entrada invalida ou ilegivel";
+
   private final ImageEditProperties props;
   private final ImageResizer resizer;
   private final ImageEditModel model;
@@ -73,33 +82,37 @@ public class ImageEditService {
   /**
    * Gera/edita imagem a partir dos bytes do ambiente, injetando o prompt fixo e a imagem da pedra.
    *
+   * <p>Contrato "never throws": qualquer excecao (validacao, I/O, gateway) vira {@link
+   * GenerateResult.Err}. O detalhe da excecao e registrado em log (server-side); o cliente recebe
+   * apenas mensagens genericas e estaveis.
+   *
    * @param ambiente bytes da foto do ambiente a ser editada
    * @return {@link Mono} com sucesso (b64 + custo) ou erro; nunca lanca
    */
   public Mono<GenerateResult> generate(byte[] ambiente) {
+    long[] inicio = {0L};
     return Mono.defer(
-        () -> {
-          long pipelineStart = System.nanoTime();
-          Optional<GenerateResult.Err> validation = validate(pipelineStart);
-          if (validation.isPresent()) {
-            return Mono.just(validation.get());
-          }
-          return prepareInputs(ambiente)
-              .flatMap(this::callGateway)
-              .onErrorResume(error -> Mono.just(toErr(error, pipelineStart)));
-        });
+            () -> {
+              inicio[0] = System.nanoTime();
+              Optional<GenerateResult.Err> validacao = validate();
+              if (validacao.isPresent()) {
+                return Mono.just(validacao.get());
+              }
+              return prepareInputs(ambiente).flatMap(inputs -> callGateway(inputs, inicio[0]));
+            })
+        .onErrorResume(error -> Mono.just(toErr(error, inicio[0])));
   }
 
-  /** Validacoes sincronas (api-key presente, pedra em disco). Retorna Err ou empty. */
-  private Optional<GenerateResult.Err> validate(long start) {
+  /** Validacoes sincronas (api-key presente, pedra em disco). Retorna Err generico ou empty. */
+  private Optional<GenerateResult.Err> validate() {
     String apiKey = props.getApiKey();
     if (apiKey == null || apiKey.isBlank()) {
-      return Optional.of(
-          new GenerateResult.Err("OPENAI_API_KEY ausente. Defina no ambiente.", ms(start)));
+      log.warn("OPENAI_API_KEY ausente no ambiente");
+      return Optional.of(new GenerateResult.Err(MSG_FALHA_GERACAO, 0L));
     }
-    if (!Files.exists(props.getStonePath())) {
-      return Optional.of(
-          new GenerateResult.Err("stone image not found: " + props.getStonePath(), ms(start)));
+    if (props.getStonePath() == null || !Files.exists(props.getStonePath())) {
+      log.warn("stone-path ausente ou inexistente: {}", props.getStonePath());
+      return Optional.of(new GenerateResult.Err(MSG_FALHA_GERACAO, 0L));
     }
     return Optional.empty();
   }
@@ -131,8 +144,7 @@ public class ImageEditService {
   }
 
   /** Monta o prompt, chama o gateway (medindo latencia), extrai b64 e computa custo. */
-  private Mono<GenerateResult> callGateway(PreparedInputs inputs) {
-    long pipelineStart = System.nanoTime();
+  private Mono<GenerateResult> callGateway(PreparedInputs inputs, long pipelineStart) {
     ImageEditPrompt prompt =
         ImageEditPrompt.of(
             EditPrompts.COUNTERTOP,
@@ -141,27 +153,25 @@ public class ImageEditService {
                 InputImage.of(inputs.ambiente(), "ambiente.jpg"),
                 InputImage.of(inputs.pedra(), nomeDoArquivoDaPedra())));
     final long callStart = System.nanoTime();
-    return model
-        .call(prompt)
-        .flatMap(resp -> toResult(resp, callStart))
-        .onErrorResume(error -> Mono.just(toErr(error, pipelineStart)));
+    return model.call(prompt).flatMap(resp -> toResult(resp, callStart));
   }
 
   /**
-   * Extrai b64 da resposta e monta o resultado. Sem b64 -> Err. Caso contrario computa o custo de
-   * forma reativa: falha da cotacao nao derruba a geracao (Ok com custo nulo).
+   * Extrai b64 da resposta e monta o resultado. Sem b64 -> Err generico. Caso contrario computa o
+   * custo de forma reativa: falha da cotacao nao derruba a geracao (Ok com custo nulo).
    */
   private Mono<GenerateResult> toResult(ImageResponse resp, long callStart) {
     long latency = ms(callStart);
     Optional<String> b64 = resp.firstB64();
     if (b64.isEmpty()) {
-      return Mono.just(new GenerateResult.Err("resposta sem b64_json", latency));
+      log.warn("resposta do gateway sem image_b64/b64_json");
+      return Mono.just(new GenerateResult.Err(MSG_FALHA_GERACAO, latency));
     }
     String b64Value = b64.get();
     java.util.function.Function<ImageCost, GenerateResult> toOkWithCost =
-        cost -> new GenerateResult.Ok(b64Value, resp.raw(), resp.metadata().usage(), latency, cost);
+        cost -> new GenerateResult.Ok(b64Value, resp.metadata().usage(), latency, cost);
     GenerateResult okSemCusto =
-        new GenerateResult.Ok(b64Value, resp.raw(), resp.metadata().usage(), latency, null);
+        new GenerateResult.Ok(b64Value, resp.metadata().usage(), latency, null);
     return computeCost()
         .map(toOkWithCost)
         .onErrorResume(error -> Mono.just(okSemCusto))
@@ -180,7 +190,7 @@ public class ImageEditService {
       return Mono.empty();
     }
     final BigDecimal usd = costUsd.get();
-    return usdBrl.currentRate().map(rate -> new ImageCost(usd, usd.multiply(rate), null));
+    return usdBrl.currentRate().map(rate -> new ImageCost(usd, usd.multiply(rate)));
   }
 
   /** Extrai o nome do arquivo da pedra do path configurado (fallback "pedra.png"). */
@@ -189,13 +199,17 @@ public class ImageEditService {
     return fileName != null ? fileName.toString() : "pedra.png";
   }
 
-  /** Traduz qualquer excecao em {@link GenerateResult.Err}. */
+  /**
+   * Traduz qualquer excecao em {@link GenerateResult.Err} com mensagem generica. O detalhe real
+   * fica apenas no log (server-side). Decode leva a mensagem de entrada invalida; demais a geral.
+   */
   private static GenerateResult.Err toErr(Throwable error, long start) {
+    long latency = ms(start);
     if (error instanceof DecodeFailedException) {
-      return new GenerateResult.Err("unable to decode input image", ms(start));
+      return new GenerateResult.Err(MSG_ENTRADA_INVALIDA, latency);
     }
-    String message = error.getMessage() != null ? error.getMessage() : error.toString();
-    return new GenerateResult.Err(message, ms(start));
+    log.warn("geracao de imagem falhou", error);
+    return new GenerateResult.Err(MSG_FALHA_GERACAO, latency);
   }
 
   private static long ms(long start) {
@@ -223,14 +237,9 @@ public class ImageEditService {
     }
 
     @Override
-    @NotNull
     public String toString() {
-      return "PreparedInputs{"
-          + "ambiente="
-          + Arrays.toString(ambiente)
-          + ", pedra="
-          + Arrays.toString(pedra)
-          + '}';
+      return "PreparedInputs{ambiente=<%d bytes>, pedra=<%d bytes>}"
+          .formatted(ambiente.length, pedra.length);
     }
   }
 
