@@ -200,6 +200,8 @@ public class ImageEditService {
    * Persiste a imagem gerada com sucesso: decodifica o b64, envia os bytes ao object storage e
    * grava os metadados no repositorio (JPA, bloqueante, em boundedElastic). Ordem: bytes primeiro
    * (a key vem do storage), linha depois. Devolve o MESMO resultado recebido, sem reconstruir o Ok.
+   * Falha de persistencia (storage ou repositorio) nao derruba a geracao: o mesmo Ok e devolvido e
+   * a falha fica registrada em log warn.
    */
   private Mono<GenerateResult> persistirImagem(GenerateResult resultado) {
     if (!(resultado instanceof GenerateResult.Ok ok)) {
@@ -211,7 +213,12 @@ public class ImageEditService {
             objetoKey ->
                 Mono.fromCallable(() -> repository.save(novaImagem(ok, objetoKey)))
                     .subscribeOn(Schedulers.boundedElastic()))
-        .thenReturn(resultado);
+        .thenReturn(resultado)
+        .onErrorResume(
+            error -> {
+              log.warn("persistencia da imagem falhou; seguindo sem gravar", error);
+              return Mono.just(resultado);
+            });
   }
 
   /** Monta os metadados da imagem gerada a partir do resultado e da key devolvida pelo storage. */
