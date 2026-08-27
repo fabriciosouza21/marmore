@@ -1,0 +1,55 @@
+@startuml sse-user-flow
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 150
+skinparam participantPadding 10
+skinparam BoxPadding 10
+skinparam note {
+  BackgroundColor #FFF9C4
+  BorderColor #FBC02D
+}
+skinparam sequence {
+  ArrowColor #455A64
+  LifeLineBorderColor #607D8B
+  ParticipantBorderColor #37474F
+  ParticipantBackgroundColor #CFD8DC
+}
+
+title Fluxo de edição de imagem via SSE — visão do usuário
+
+actor "Cliente\n(Bruno / Frontend)" as Cliente
+participant "API Marmore\n/images/edit/stream" as API
+participant "OpenAI\n/v1/images/edits" as OpenAI
+
+Cliente -> API : 0. POST /images/edit/stream\n(multipart: image, Accept: text/event-stream)
+API --> Cliente : 200 OK\nContent-Type: text/event-stream\n(canal SSE aberto, unidirecional)
+
+note over Cliente, API
+  A partir daqui o cliente SÓ ESCUTA:
+  conexão persistente, o servidor envia eventos
+  e o cliente nunca faz um novo request.
+end note
+
+API -> Cliente : event: status\ndata: {"fase":"recebido"}
+API -> Cliente : event: status\ndata: {"fase":"redimensionando"}
+
+API -> OpenAI : 1. POST /v1/images/edits\n(multipart + Bearer)
+
+note over API, OpenAI
+  A OpenAI NÃO faz streaming da geração.
+  A chamada é bloqueante (até 180s). O "progresso"
+  durante a espera é apenas heartbeat, não evolução real.
+end note
+
+loop a cada 15s (enquanto a OpenAI responde)
+  API -> Cliente : event: ping
+end
+
+OpenAI --> API : 2. 200 JSON { b64_json, usage }
+
+API -> Cliente : event: done\ndata: {"latency_ms", "custo_brl", "usage"}
+API -> Cliente : event: imagem\ndata: <base64 PNG puro>
+API --> Cliente : fim do stream (canal fechado)
+
+@enduml

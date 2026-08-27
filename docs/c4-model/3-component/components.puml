@@ -1,0 +1,41 @@
+@startuml components
+
+!include ../lib/C4_Component.puml
+!include ../lib/icons/sprites/fa5_shield_alt.puml
+!include ../lib/icons/sprites/fa5_cog.puml
+!include ../lib/icons/sprites/fa5_image.puml
+!include ../lib/icons/sprites/fa5_code_branch.puml
+!include ../lib/icons/sprites/fa5_robot.puml
+
+title Marmore API — C4 Nível 3: Componentes do Container "API Spring Boot"
+
+LAYOUT_WITH_LEGEND()
+
+Container_Boundary(api, "API Spring Boot", "Java 21, Spring Boot, MVC") {
+
+  Component(web, "ImageEditController", "Spring @RestController", "Boundary HTTP. Converte MultipartFile em bytes\ne delega ao service. Suporta retorno PNG (REST)\ne SseEmitter (SSE com eventos de progresso).", $sprite="cog")
+
+  Component(service, "ImageEditService", "@Service", "Orquestra validações pré-rede (api-key,\npedra em disco, resize), monta o ImageEditPrompt\ne traduz o contrato do gateway em GenerateResult.\nNunca lança exceção: falhas viram GenerateResult.Err.", $sprite="cog")
+
+  Component(resizer, "ImageResizer", "@Component", "Redimensiona e re-codifica a imagem do ambiente\nem memória (Thumbnailator, JPEG 1536px q0.85).\nEntrada inválida vira Optional.empty().", $sprite="image")
+
+  Component(model, "ImageEditModel (interface)", "porta/gateway", "Abstração da chamada de IA. Permite trocar o\nprovedor (OpenAI, mock) sem alterar o service.", $sprite="cog")
+
+  Component(gateway, "OpenAiRestClientImageEditModel", "@Component", "Implementação de ImageEditModel que fala com a OpenAI\nvia RestClient. Monta o multipart /v1/images/edits,\npreservando a ordem image[0]=ambiente, image[1]=pedra.\nLança AiImageException em falha.", $sprite="code_branch")
+
+  Component(security, "ApiKeyAuthFilter", "Spring Security", "Autenticação por X-API-Key em cada request\nantes de chegar ao controller.", $sprite="shield_alt")
+}
+
+System_Ext(openai, "OpenAI API", "/v1/images/edits", $sprite="robot")
+
+Rel(security, web, "autentica e libera a request", "HTTP")
+Rel(web, service, "generate(bytes)\nou generateStream(bytes, emitter)", "chamada local")
+Rel(service, resizer, "resize(bytes)", "chamada local")
+Rel(service, model, "call(prompt)", "chamada local")
+Rel(gateway, model, "implements", "")
+Rel(gateway, openai, "POST /v1/images/edits", "HTTPS / multipart")
+Rel_Back(openai, gateway, "b64_json + usage", "HTTPS / JSON")
+
+SHOW_FLOATING_LEGEND()
+
+@enduml

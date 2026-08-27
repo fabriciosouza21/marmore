@@ -17,6 +17,27 @@ cp .env.example .env       # se houver exemplo; senão crie à mão
 source ./load-env.sh       # carrega variáveis no shell atual (repita a cada sessão)
 ```
 
+## Configuração
+
+A chave `OPENAI_API_KEY` deve ser exportada no ambiente (ou via `.env`
+carregado por `load-env.sh`). Sem ela, `POST /images/edit` responde `503`
+com a mensagem `OPENAI_API_KEY ausente`.
+
+O endpoint de edição precisa ainda de uma imagem de referência da pedra
+(`granito.png`) enviada como segundo anexo do multipart. O caminho padrão é
+`${user.dir}/data/granito.png` e o arquivo `data/granito.png` já vem do
+repositório, então funciona após um clone limpo. Para trocar a pedra,
+sobrescreva `marmore.openai.image.stone-path` (em `application.yaml`, por
+variável de ambiente `MARMORE_OPENAI_IMAGE_STONE_PATH` ou argumento
+`--marmore.openai.image.stone-path=...`):
+
+```yaml
+marmore:
+  openai:
+    image:
+      stone-path: ${user.dir}/data/granito.png
+```
+
 ## Comandos
 
 Rode `make help` para a lista completa. Os principais:

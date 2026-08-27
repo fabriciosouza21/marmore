@@ -3,4 +3,30 @@ spring:
     name: api
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${OPENAI_API_KEY:}
+    model:
+      chat: none
+      embedding: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+  codec:
+    max-in-memory-size: 25MB
+
+marmore:
+  api:
+    key: ${MARMORE_API_KEY:}
+  openai:
+    image:
+      base-url: https://api.openai.com
+      api-key: ${spring.ai.openai.api-key:}
+      default-model: gpt-image-2
+      timeout: 180s
+      stone-path: ${user.dir}/data/granito.png
+  cost:
+    usd-brl:
+      url: https://economia.awesomeapi.com.br/json/last/USD-BRL
+      cache-ttl: 6h
+      fallback: 5.1075

@@ -1,0 +1,111 @@
+package com.marmore.api.imageedit.cost;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * Provedor da cotacao USD->BRL com cache em memoria por TTL e fallback em falha.
+ *
+ * <p>Busca o campo {@code USDBRL.bid} da AwesomeAPI via {@link WebClient}. Se a ultima busca foi ha
+ * menos de {@link UsdBrlProperties#cacheTtl()}, retorna o valor em cache sem refazer a chamada. Em
+ * qualquer erro (HTTP 4xx/5xx, timeout, JSON invalido) retorna {@link UsdBrlProperties#fallback()}
+ * sem atualizar o cache, de modo que a proxima chamada dentro do TTL tentara a API novamente.
+ *
+ * <p>Le o corpo como {@code String} e desserializa com um {@link ObjectMapper} compartilhado em vez
+ * de confiar em {@code bodyToMono(JsonNode.class)}: assim o provedor funciona mesmo quando o {@link
+ * WebClient.Builder} injetado nao tem os codecs Jackson pre-configurados (caso dos testes com
+ * MockWebServer usando um builder cru).
+ *
+ * <p>Timeout: 5 segundos aplicados via {@link Mono#timeout(Duration)} sobre a busca inteira. Cobrem
+ * conexao, espera por cabecalhos e leitura do corpo; curto o suficiente para o fallback entrar
+ * rapido em falha.
+ *
+ * <p>Concorrencia do cache: o campo {@code cache} e um {@link AtomicReference} apontando para um
+ * {@link CacheEntry} imutavel. A verificacao de validade e sincrona (rapida); a busca e assincrona.
+ * A escrita do cache apos uma busca bem-sucedida e atomica (ultima escrita vence). Durante a janela
+ * de raca na fronteira do TTL duas chamadas concorrentes podem disparar buscas duplicadas, mas
+ * nenhuma corrupcao e possivel -- bloquear o event loop mantendo um lock sobre uma operacao
+ * assincrona seria pior que a duplicacao rara.
+ */
+@Component
+public class UsdBrlProvider {
+
+  /** ObjectMapper compartilhado e thread-safe (Jackson). */
+  private static final ObjectMapper MAPPER = new ObjectMapper();
+
+  /** Timeout aplicado a busca da cotacao via {@link Mono#timeout(Duration)}. */
+  private static final Duration FETCH_TIMEOUT = Duration.ofSeconds(5);
+
+  /**
+   * TTL do cache negativo: por quanto tempo o fallback fica cacheado apos uma falha da API. Curto o
+   * suficiente para a API ser retentada logo, longo o suficiente para nao bater nela a cada request
+   * durante uma outage (evita pagar o {@link #FETCH_TIMEOUT} integral em cada chamada).
+   */
+  private static final Duration NEGATIVE_TTL = Duration.ofSeconds(30);
+
+  private final WebClient client;
+  private final UsdBrlProperties props;
+
+  private final AtomicReference<CacheEntry> cache = new AtomicReference<>();
+
+  /**
+   * Constroi o provedor a partir de um {@link WebClient.Builder} (nao um {@link WebClient} pronto)
+   * para que o teste aponte o cliente para um {@code MockWebServer}.
+   */
+  public UsdBrlProvider(WebClient.Builder builder, UsdBrlProperties props) {
+    this.client = builder.build();
+    this.props = props;
+  }
+
+  /**
+   * Retorna a cotacao atual: valor em cache se valido, ou busca fresca na API. Em erro (incluindo
+   * timeout), retorna o fallback.
+   */
+  public Mono<BigDecimal> currentRate() {
+    CacheEntry entry = cache.get();
+    if (entry != null && entry.isValid()) {
+      return Mono.just(entry.value());
+    }
+    return client
+        .get()
+        .uri(props.url())
+        .retrieve()
+        .bodyToMono(String.class)
+        .map(UsdBrlProvider::extractBid)
+        .timeout(FETCH_TIMEOUT)
+        .doOnNext(value -> cache.set(new CacheEntry(value, Instant.now().plus(props.cacheTtl()))))
+        .onErrorResume(
+            error -> {
+              cache.set(new CacheEntry(props.fallback(), Instant.now().plus(NEGATIVE_TTL)));
+              return Mono.just(props.fallback());
+            });
+  }
+
+  /** Extrai o campo {@code USDBRL.bid} do JSON da AwesomeAPI como {@link BigDecimal}. */
+  private static BigDecimal extractBid(String body) {
+    try {
+      JsonNode root = MAPPER.readTree(body);
+      JsonNode bid = root.path("USDBRL").path("bid");
+      if (bid.isMissingNode() || !bid.isString()) {
+        throw new IllegalStateException("USDBRL.bid ausente ou invalido: " + body);
+      }
+      return new BigDecimal(bid.asString());
+    } catch (tools.jackson.core.JacksonException e) {
+      throw new IllegalStateException("JSON invalido da AwesomeAPI: " + body, e);
+    }
+  }
+
+  /** Entrada imutavel do cache: valor + instante de expiracao. */
+  private record CacheEntry(BigDecimal value, Instant expiresAt) {
+    boolean isValid() {
+      return Instant.now().isBefore(expiresAt);
+    }
+  }
+}

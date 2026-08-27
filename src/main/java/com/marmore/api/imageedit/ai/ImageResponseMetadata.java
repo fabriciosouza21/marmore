@@ -1,0 +1,19 @@
+package com.marmore.api.imageedit.ai;
+
+import org.jspecify.annotations.Nullable;
+import tools.jackson.databind.JsonNode;
+
+/**
+ * Metadados de uma resposta de geracao de imagem. Anlogo a {@code
+ * org.springframework.ai.image.ImageResponseMetadata}. Carrega o consumo reportado pelo provedor
+ * (tokens etc.) como JSON cru. Imutavel (record).
+ *
+ * @param usage consumo reportado pelo provedor, ou nulo se ausente
+ */
+public record ImageResponseMetadata(@Nullable JsonNode usage) {
+
+  /** Factory estatica para metadata sem uso. */
+  public static ImageResponseMetadata empty() {
+    return new ImageResponseMetadata(null);
+  }
+}

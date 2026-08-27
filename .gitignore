@@ -1,6 +1,8 @@
 HELP.md
 .env
+.handoff/
 target/
+.bruno-cache/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

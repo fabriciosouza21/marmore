@@ -1,0 +1,74 @@
+@startuml edicao-imagem-sequence
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 150
+skinparam participantPadding 10
+skinparam BoxPadding 10
+skinparam note {
+  BackgroundColor #FFF9C4
+  BorderColor #FBC02D
+}
+skinparam sequence {
+  ArrowColor #455A64
+  LifeLineBorderColor #607D8B
+  ParticipantBorderColor #37474F
+  ParticipantBackgroundColor #CFD8DC
+}
+
+title Fluxo de edição de imagem — caminho feliz (200 PNG)
+
+participant "Cliente HTTP" as Cliente
+
+box "Camada Web" #EEEEEE
+  participant "ImageEditController\n(web)" as Controller
+end box
+
+box "Camada de Serviço" #E8F5E9
+  participant "ImageEditService\n(service)" as Service
+  participant "ImageResizer\n(service)" as Resizer
+end box
+
+box "Camada de IA (gateway)" #E3F2FD
+  participant "OpenAiRestClientImageEditModel\n(ai)" as Gateway
+end box
+
+participant "OpenAI API\n/v1/images/edits" as OpenAI
+
+Cliente -> Controller : 1. POST /images/edit\n(multipart/form-data, campo "image" = foto do ambiente)
+Controller -> Controller : 2. image.getBytes()\n(extrai bytes do MultipartFile)
+Controller -> Service : 3. generate(byte[] ambiente)
+Service -> Service : 4. carrega pedra do disco\n(FileSystemResource(props.getStonePath()).getContentAsByteArray())
+note over Service
+  A imagem da pedra (granito) vem de
+  props.getStonePath(), configuravel em
+  application.yaml. Nao e enviada pelo cliente.
+end note
+Service -> Resizer : 5. resize(ambiente)
+Resizer --> Service : ambiente redimensionado (JPEG <= 1536px)
+Service -> Service : 6. monta ImageEditPrompt\n(EditPrompts.COUNTERTOP + AiImageOptions.defaults()\n+ InputImage[ambiente, pedra])
+Service -> Gateway : 7. model.call(prompt)
+Gateway -> Gateway : 8. monta multipart\n(image[0] = ambiente, image[1] = pedra)
+note over Gateway
+  A ordem das duas partes image[] e semantica:
+  image[0] = ambiente (IMAGE 1),
+  image[1] = pedra/granito (IMAGE 2).
+  O prompt fixo EditPrompts.COUNTERTOP referencia
+  essa ordem.
+end note
+Gateway -> OpenAI : 9. POST /v1/images/edits\n(multipart, Authorization Bearer)
+OpenAI --> Gateway : 10. 200 OK\nJSON com data[0].b64_json (+ usage)
+Gateway -> Gateway : 11. traduz JSON em ImageResponse\n(results, metadata, raw)
+Gateway --> Service : 12. retorna ImageResponse
+Service -> Service : 13. traduz em\nGenerateResult.Ok(b64, raw, usage, latencyMs)
+note over Service
+  O service traduz o contrato do gateway
+  (que lanca AiImageException em falha) em
+  GenerateResult.Ok/Err (sealed). O controller
+  nunca recebe excecao do service.
+end note
+Service --> Controller : 14. retorna GenerateResult.Ok
+Controller -> Controller : 15. Base64.getDecoder().decode(ok.b64())\n(base64 -> bytes PNG)
+Controller --> Cliente : 16. 200 OK\n(Content-Type: image/png, body PNG)
+
+@enduml
