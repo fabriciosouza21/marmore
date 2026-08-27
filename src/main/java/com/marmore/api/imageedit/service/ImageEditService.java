@@ -11,10 +11,15 @@ import com.marmore.api.imageedit.cost.UsdBrlProvider;
 import com.marmore.api.imageedit.domain.EditPrompts;
 import com.marmore.api.imageedit.domain.GenerateResult;
 import com.marmore.api.imageedit.domain.ImageCost;
+import com.marmore.api.imageedit.storage.GeneratedImage;
+import com.marmore.api.imageedit.storage.GeneratedImageRepository;
+import com.marmore.api.imageedit.storage.ImageObjectStorage;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -42,6 +47,9 @@ import reactor.core.scheduler.Schedulers;
  *       apenas essa chamada (do envio do request ate a {@link ImageResponse}).
  *   <li>Custo: {@link ImageCostCalculator#costUsd} x {@link UsdBrlProvider#currentRate}. Falha da
  *       cotacao nao derruba a geracao: o {@link GenerateResult.Ok} e devolvido com custo nulo.
+ *   <li>Persistencia (caminho feliz): os bytes da imagem sao gravados no object storage ({@link
+ *       ImageObjectStorage}) e os metadados no repositorio JPA; o {@link GenerateResult.Ok}
+ *       devolvido e o mesmo da geracao.
  * </ul>
  */
 @Service
@@ -59,6 +67,8 @@ public class ImageEditService {
   private final ImageResizer resizer;
   private final ImageEditModel model;
   private final UsdBrlProvider usdBrl;
+  private final ImageObjectStorage storage;
+  private final GeneratedImageRepository repository;
 
   /**
    * Construtor.
@@ -67,16 +77,22 @@ public class ImageEditService {
    * @param resizer redimensionador de imagem (bloqueante)
    * @param model gateway de edicao de imagem reativo (OpenAI ou outro)
    * @param usdBrl provedor da cotacao USD->BRL (reativo, com cache/fallback)
+   * @param storage armazenamento de objetos das imagens geradas (MinIO)
+   * @param repository repositorio JPA dos metadados das imagens geradas
    */
   public ImageEditService(
       ImageEditProperties props,
       ImageResizer resizer,
       ImageEditModel model,
-      UsdBrlProvider usdBrl) {
+      UsdBrlProvider usdBrl,
+      ImageObjectStorage storage,
+      GeneratedImageRepository repository) {
     this.props = props;
     this.resizer = resizer;
     this.model = model;
     this.usdBrl = usdBrl;
+    this.storage = storage;
+    this.repository = repository;
   }
 
   /**
@@ -158,7 +174,8 @@ public class ImageEditService {
 
   /**
    * Extrai b64 da resposta e monta o resultado. Sem b64 -> Err generico. Caso contrario computa o
-   * custo de forma reativa: falha da cotacao nao derruba a geracao (Ok com custo nulo).
+   * custo de forma reativa: falha da cotacao nao derruba a geracao (Ok com custo nulo). No caminho
+   * feliz persiste a imagem e devolve o mesmo {@link GenerateResult.Ok}.
    */
   private Mono<GenerateResult> toResult(ImageResponse resp, long callStart) {
     long latency = ms(callStart);
@@ -175,7 +192,37 @@ public class ImageEditService {
     return computeCost()
         .map(toOkWithCost)
         .onErrorResume(error -> Mono.just(okSemCusto))
-        .switchIfEmpty(Mono.just(okSemCusto));
+        .switchIfEmpty(Mono.just(okSemCusto))
+        .flatMap(this::persistirImagem);
+  }
+
+  /**
+   * Persiste a imagem gerada com sucesso: decodifica o b64, envia os bytes ao object storage e
+   * grava os metadados no repositorio (JPA, bloqueante, em boundedElastic). Ordem: bytes primeiro
+   * (a key vem do storage), linha depois. Devolve o MESMO resultado recebido, sem reconstruir o Ok.
+   */
+  private Mono<GenerateResult> persistirImagem(GenerateResult resultado) {
+    if (!(resultado instanceof GenerateResult.Ok ok)) {
+      return Mono.just(resultado);
+    }
+    return storage
+        .salvar(Base64.getDecoder().decode(ok.b64()))
+        .flatMap(
+            objetoKey ->
+                Mono.fromCallable(() -> repository.save(novaImagem(ok, objetoKey)))
+                    .subscribeOn(Schedulers.boundedElastic()))
+        .thenReturn(resultado);
+  }
+
+  /** Monta os metadados da imagem gerada a partir do resultado e da key devolvida pelo storage. */
+  private GeneratedImage novaImagem(GenerateResult.Ok ok, String objetoKey) {
+    GeneratedImage imagem = new GeneratedImage();
+    imagem.setCriadoEm(Instant.now());
+    imagem.setLatenciaMs(ok.latencyMs());
+    imagem.setCustoBrl(ok.cost() == null ? null : ok.cost().costBrl());
+    imagem.setModelo(props.getDefaultModel());
+    imagem.setObjetoKey(objetoKey);
+    return imagem;
   }
 
   /**

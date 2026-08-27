@@ -18,8 +18,12 @@ import com.marmore.api.imageedit.config.ImageEditProperties;
 import com.marmore.api.imageedit.cost.UsdBrlProvider;
 import com.marmore.api.imageedit.domain.EditPrompts;
 import com.marmore.api.imageedit.domain.GenerateResult;
+import com.marmore.api.imageedit.storage.GeneratedImage;
+import com.marmore.api.imageedit.storage.GeneratedImageRepository;
+import com.marmore.api.imageedit.storage.ImageObjectStorage;
 import java.math.BigDecimal;
 import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,6 +42,8 @@ class ImageEditServiceTest {
   private ImageResizer resizer;
   private ImageEditModel model;
   private UsdBrlProvider usdBrl;
+  private ImageObjectStorage storage;
+  private GeneratedImageRepository repository;
   private ImageEditService service;
 
   @BeforeEach
@@ -49,7 +55,11 @@ class ImageEditServiceTest {
     model = org.mockito.Mockito.mock(ImageEditModel.class);
     usdBrl = org.mockito.Mockito.mock(UsdBrlProvider.class);
     when(usdBrl.currentRate()).thenReturn(monoJust(new BigDecimal("5.00")));
-    service = new ImageEditService(props, resizer, model, usdBrl);
+    storage = org.mockito.Mockito.mock(ImageObjectStorage.class);
+    when(storage.salvar(any())).thenReturn(monoJust("imagens/abc.png"));
+    repository = org.mockito.Mockito.mock(GeneratedImageRepository.class);
+    when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    service = new ImageEditService(props, resizer, model, usdBrl, storage, repository);
   }
 
   @DisplayName("sucesso: gateway devolve b64 -> Ok com b64 e custo BRL calculado")
@@ -179,6 +189,33 @@ class ImageEditServiceTest {
 
     assertThat(result).isInstanceOf(GenerateResult.Ok.class);
     assertThat(((GenerateResult.Ok) result).b64()).isEqualTo("aA==");
+  }
+
+  @DisplayName("sucesso: persiste imagem (storage + repositorio) e mantem Ok")
+  @Test
+  void sucessoPersisteImagemGeradaMantendoResultado() throws Exception {
+    when(model.call(any())).thenReturn(monoJust(respostaComB64("aGVsbG8=")));
+
+    GenerateResult result = service.generate(TestImages.ambiente()).block();
+
+    assertThat(result).isInstanceOf(GenerateResult.Ok.class);
+    GenerateResult.Ok ok = (GenerateResult.Ok) result;
+    assertThat(ok.b64()).isEqualTo("aGVsbG8=");
+    assertThat(ok.cost()).isNotNull();
+    assertThat(ok.cost().costBrl()).isEqualByComparingTo(new BigDecimal("0.03000"));
+
+    ArgumentCaptor<byte[]> captorBytes = ArgumentCaptor.forClass(byte[].class);
+    verify(storage).salvar(captorBytes.capture());
+    assertThat(captorBytes.getValue()).isEqualTo(Base64.getDecoder().decode("aGVsbG8="));
+
+    ArgumentCaptor<GeneratedImage> captorImagem = ArgumentCaptor.forClass(GeneratedImage.class);
+    verify(repository).save(captorImagem.capture());
+    GeneratedImage salva = captorImagem.getValue();
+    assertThat(salva.getObjetoKey()).isEqualTo("imagens/abc.png");
+    assertThat(salva.getModelo()).isEqualTo(props.getDefaultModel());
+    assertThat(salva.getCustoBrl()).isEqualByComparingTo(ok.cost().costBrl());
+    assertThat(salva.getLatenciaMs()).isEqualTo(ok.latencyMs());
+    assertThat(salva.getCriadoEm()).isNotNull();
   }
 
   private static reactor.core.publisher.Mono<BigDecimal> monoJust(BigDecimal v) {
