@@ -2,10 +2,13 @@ package com.marmore.api.imageedit.web;
 
 import com.marmore.api.imageedit.storage.GeneratedImageRepository;
 import com.marmore.api.imageedit.storage.ImageObjectStorage;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -56,5 +59,37 @@ public class ImageHistoryHandler {
         .flatMap(
             resumos ->
                 ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(resumos));
+  }
+
+  /**
+   * Responde {@code 200 image/png} com os bytes da imagem baixados do object storage. Id malformado
+   * ou inexistente no repositorio responde {@code 404}.
+   *
+   * @param request requisicao com {@code id} na path
+   * @return bytes PNG do storage, ou 404
+   */
+  public Mono<ServerResponse> arquivo(ServerRequest request) {
+    UUID id;
+    try {
+      id = UUID.fromString(request.pathVariable("id"));
+    } catch (IllegalArgumentException e) {
+      return Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND));
+    }
+    return Mono.fromCallable(() -> repository.findById(id))
+        .subscribeOn(Schedulers.boundedElastic())
+        .flatMap(
+            entidade ->
+                entidade
+                    .map(
+                        imagem ->
+                            storage
+                                .baixar(imagem.getObjetoKey())
+                                .flatMap(
+                                    bytes ->
+                                        ServerResponse.ok()
+                                            .contentType(MediaType.IMAGE_PNG)
+                                            .bodyValue(bytes)))
+                    .orElseGet(
+                        () -> Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND))));
   }
 }

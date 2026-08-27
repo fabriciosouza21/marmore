@@ -21,6 +21,9 @@ public class ImageHistoryRouter {
    */
   @Bean
   public RouterFunction<ServerResponse> imageHistoryRoute(ImageHistoryHandler handler) {
-    return RouterFunctions.route().GET("/images", handler::list).build();
+    return RouterFunctions.route()
+        .GET("/images", handler::list)
+        .GET("/images/{id}/arquivo", handler::arquivo)
+        .build();
   }
 }

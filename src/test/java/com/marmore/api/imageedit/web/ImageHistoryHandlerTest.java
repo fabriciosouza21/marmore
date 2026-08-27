@@ -1,6 +1,7 @@
 package com.marmore.api.imageedit.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -10,12 +11,14 @@ import com.marmore.api.imageedit.storage.ImageObjectStorage;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Mono;
 
 /**
  * Testes do {@link ImageHistoryHandler} no GET /images. Contrato do JSON de saida: array com
@@ -27,12 +30,13 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 class ImageHistoryHandlerTest {
 
   private GeneratedImageRepository repository;
+  private ImageObjectStorage storage;
   private WebTestClient client;
 
   @BeforeEach
   void setUp() {
     repository = mock(GeneratedImageRepository.class);
-    ImageObjectStorage storage = mock(ImageObjectStorage.class);
+    storage = mock(ImageObjectStorage.class);
     ImageHistoryHandler handler = new ImageHistoryHandler(repository, storage);
     client =
         WebTestClient.bindToRouterFunction(new ImageHistoryRouter().imageHistoryRoute(handler))
@@ -84,6 +88,42 @@ class ImageHistoryHandlerTest {
         .value(custo -> assertThat(custo).isNull())
         .jsonPath("[1].latencia_ms")
         .isEqualTo(800);
+  }
+
+  @DisplayName("GET /images/{id}/arquivo: 200 com image/png e os bytes baixados do storage")
+  @Test
+  void baixaArquivoPngDaImagemExistente() {
+    UUID id = UUID.randomUUID();
+    GeneratedImage entidade =
+        imagem(id, Instant.parse("2026-08-27T12:00:00Z"), "gpt-image-2", null, 100L);
+    when(repository.findById(id)).thenReturn(Optional.of(entidade));
+    when(storage.baixar(any())).thenReturn(Mono.just(new byte[] {1, 2, 3}));
+
+    client
+        .get()
+        .uri("/images/" + id + "/arquivo")
+        .exchange()
+        .expectStatus()
+        .isOk()
+        .expectHeader()
+        .contentType(MediaType.IMAGE_PNG)
+        .expectBody(byte[].class)
+        .isEqualTo(new byte[] {1, 2, 3});
+  }
+
+  @DisplayName("GET /images/{id}/arquivo: 404 quando o id nao existe no repositorio")
+  @Test
+  void retorna404QuandoIdNaoExiste() {
+    UUID id = UUID.randomUUID();
+    when(repository.findById(id)).thenReturn(Optional.empty());
+
+    client.get().uri("/images/" + id + "/arquivo").exchange().expectStatus().isNotFound();
+  }
+
+  @DisplayName("GET /images/{id}/arquivo: 404 quando o id e malformado")
+  @Test
+  void retorna404QuandoIdMalformado() {
+    client.get().uri("/images/nao-uuid/arquivo").exchange().expectStatus().isNotFound();
   }
 
   private static GeneratedImage imagem(
