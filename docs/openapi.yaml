@@ -66,6 +66,7 @@ paths:
                   custo_brl: 0.27
                   latencia_ms: 12345
                   pedra: verde_ubatuba
+                  nome_pedra: Verde Ubatuba
                   produto: pia-americana
                   nome_produto: Pia americana
         '401':
@@ -365,6 +366,12 @@ components:
           type: string
           nullable: true
           description: Id da pedra escolhida no catalogo no momento da geracao.
+        nome_pedra:
+          type: string
+          nullable: true
+          description: |
+            Nome comercial da pedra, resolvido do catalogo. `null` quando o id
+            da pedra nao esta gravado ou nao existe no catalogo.
         produto:
           type: string
           nullable: true
