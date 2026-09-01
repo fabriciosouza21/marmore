@@ -1,7 +1,9 @@
 package com.marmore.api.imageedit.web;
 
+import com.marmore.api.imageedit.domain.Produto;
 import com.marmore.api.imageedit.storage.GeneratedImageRepository;
 import com.marmore.api.imageedit.storage.ImageObjectStorage;
+import java.util.Arrays;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -55,11 +57,27 @@ public class ImageHistoryHandler {
                                 imagem.getModelo(),
                                 imagem.getCustoBrl(),
                                 imagem.getLatenciaMs(),
-                                imagem.getPedra()))
+                                imagem.getPedra(),
+                                imagem.getProduto(),
+                                nomeProduto(imagem.getProduto())))
                     .toList())
         .flatMap(
             resumos ->
                 ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(resumos));
+  }
+
+  /**
+   * Resolve o nome de exibicao do produto do catalogo a partir do id gravado nos metadados.
+   *
+   * @param id id do produto gravado na imagem (pode ser nulo ou desconhecido)
+   * @return nome de exibicao do catalogo, ou nulo quando o id e nulo ou nao reconhecido
+   */
+  private static String nomeProduto(String id) {
+    return Arrays.stream(Produto.values())
+        .filter(produto -> produto.id().equals(id))
+        .findFirst()
+        .map(Produto::nomeExibicao)
+        .orElse(null);
   }
 
   /**

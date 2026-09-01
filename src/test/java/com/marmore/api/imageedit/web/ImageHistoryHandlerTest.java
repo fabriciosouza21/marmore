@@ -22,9 +22,10 @@ import reactor.core.publisher.Mono;
 
 /**
  * Testes do {@link ImageHistoryHandler} no GET /images. Contrato do JSON de saida: array com
- * resumos snake_case em PT (criado_em, custo_brl, latencia_ms, pedra), criado_em como ISO-8601,
- * custo nulo preservado e ordem exatamente como devolvida pelo repositorio. A serializacao Jackson
- * e real: WebTestClient ligado direto ao {@link ImageHistoryRouter}, sem contexto Spring. O
+ * resumos snake_case em PT (criado_em, custo_brl, latencia_ms, pedra, produto, nome_produto),
+ * criado_em como ISO-8601, custo nulo preservado, produto/nome_produto nulos quando a imagem nao
+ * tem produto gravado e ordem exatamente como devolvida pelo repositorio. A serializacao Jackson e
+ * real: WebTestClient ligado direto ao {@link ImageHistoryRouter}, sem contexto Spring. O
  * repositorio e mock ({@link ImageObjectStorage} so satisfaz o construtor do handler).
  */
 class ImageHistoryHandlerTest {
@@ -44,7 +45,8 @@ class ImageHistoryHandlerTest {
   }
 
   @DisplayName(
-      "GET /images: 2 resumos em snake_case, ordem do repositório, custo nulo preservado e pedra")
+      "GET /images: 2 resumos em snake_case, ordem do repositório, custo nulo preservado, pedra e"
+          + " produto/nome_produto")
   @Test
   void listaResumosEmSnakeCaseNaOrdemDoRepositorio() {
     GeneratedImage nova =
@@ -54,7 +56,8 @@ class ImageHistoryHandlerTest {
             "gpt-image-2",
             new BigDecimal("0.03"),
             1234L,
-            "pedra-basalto");
+            "pedra-basalto",
+            "pia-americana");
     GeneratedImage antiga =
         imagem(
             UUID.randomUUID(),
@@ -62,7 +65,8 @@ class ImageHistoryHandlerTest {
             "gpt-image-1",
             null,
             800L,
-            "pedra-marmore");
+            "pedra-marmore",
+            null);
     when(repository.findAllByOrderByCriadoEmDesc()).thenReturn(List.of(nova, antiga));
 
     client
@@ -88,6 +92,10 @@ class ImageHistoryHandlerTest {
         .isEqualTo(1234)
         .jsonPath("[0].pedra")
         .isEqualTo("pedra-basalto")
+        .jsonPath("[0].produto")
+        .isEqualTo("pia-americana")
+        .jsonPath("[0].nome_produto")
+        .isEqualTo("Pia americana")
         .jsonPath("[1].id")
         .isEqualTo(antiga.getId().toString())
         .jsonPath("[1].criado_em")
@@ -99,7 +107,11 @@ class ImageHistoryHandlerTest {
         .jsonPath("[1].latencia_ms")
         .isEqualTo(800)
         .jsonPath("[1].pedra")
-        .isEqualTo("pedra-marmore");
+        .isEqualTo("pedra-marmore")
+        .jsonPath("[1].produto")
+        .value(produto -> assertThat(produto).isNull())
+        .jsonPath("[1].nome_produto")
+        .value(nomeProduto -> assertThat(nomeProduto).isNull());
   }
 
   @DisplayName("GET /images/{id}/arquivo: 200 com image/png e os bytes baixados do storage")
@@ -107,7 +119,7 @@ class ImageHistoryHandlerTest {
   void baixaArquivoPngDaImagemExistente() {
     UUID id = UUID.randomUUID();
     GeneratedImage entidade =
-        imagem(id, Instant.parse("2026-08-27T12:00:00Z"), "gpt-image-2", null, 100L, null);
+        imagem(id, Instant.parse("2026-08-27T12:00:00Z"), "gpt-image-2", null, 100L, null, null);
     when(repository.findById(id)).thenReturn(Optional.of(entidade));
     when(storage.baixar(any())).thenReturn(Mono.just(new byte[] {1, 2, 3}));
 
@@ -144,7 +156,8 @@ class ImageHistoryHandlerTest {
       String modelo,
       BigDecimal custoBrl,
       long latenciaMs,
-      String pedra) {
+      String pedra,
+      String produto) {
     GeneratedImage entidade = new GeneratedImage();
     entidade.setId(id);
     entidade.setCriadoEm(criadoEm);
@@ -153,6 +166,7 @@ class ImageHistoryHandlerTest {
     entidade.setModelo(modelo);
     entidade.setObjetoKey("imagens/" + id + ".png");
     entidade.setPedra(pedra);
+    entidade.setProduto(produto);
     return entidade;
   }
 }
