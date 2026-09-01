@@ -11,6 +11,9 @@ import org.springframework.core.io.ClassPathResource;
 /** Testes de {@link EditPrompts}. */
 class EditPromptsTest {
 
+  /** Placeholder do template do countertop, substituido pelo nome comercial da pedra. */
+  private static final String PLACEHOLDER_PEDRA = "{{NOME_PEDRA}}";
+
   @Test
   @SuppressWarnings("AbbreviationAsWordInName")
   void countertopContemMarcadoresDeImagem1EImagem2() {
@@ -24,7 +27,7 @@ class EditPromptsTest {
 
   @Test
   @DisplayName(
-      "Afirma que EditPrompts.COUNTERTOP e byte-igual a fonte canonica em"
+      "Afirma que o template EditPrompts.COUNTERTOP e byte-igual a fonte canonica em"
           + " prompts/prompt-countertop.md")
   void countertopIgualaFonteCanonica() throws IOException {
     String canonico;
@@ -35,5 +38,28 @@ class EditPromptsTest {
     // com \n. Comparamos com stripTrailing nos dois lados para pegar drift real, nao pedantismo de
     // whitespace.
     assertThat(EditPrompts.COUNTERTOP.stripTrailing()).isEqualTo(canonico.stripTrailing());
+  }
+
+  @Test
+  @DisplayName(
+      "interpolacao: countertop(nome) substitui o placeholder pelo nome comercial da pedra,"
+          + " sem sobras")
+  void countertopInterpolaNomeDaPedraSemDeixarPlaceholder() {
+    String prompt = EditPrompts.countertop("Verde Ubatuba");
+
+    assertThat(prompt).contains("Verde Ubatuba");
+    assertThat(prompt).doesNotContain(PLACEHOLDER_PEDRA);
+    assertThat(prompt).doesNotContain("{{");
+    assertThat(prompt)
+        .isEqualTo(EditPrompts.COUNTERTOP.replace(PLACEHOLDER_PEDRA, "Verde Ubatuba"));
+  }
+
+  @Test
+  @DisplayName("template neutro: sem travas de cor do granito verde fixo")
+  void countertopNaoContemTravasDeCorDoGranito() {
+    String prompt = EditPrompts.COUNTERTOP;
+
+    assertThat(prompt).doesNotContain("GREEN");
+    assertThat(prompt).doesNotContain("granite material");
   }
 }

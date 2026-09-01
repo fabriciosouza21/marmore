@@ -3,15 +3,19 @@ package com.marmore.api.imageedit.domain;
 /** Prompts fixos de edicao. Textos que o produto emprega sem entrada do cliente. */
 public final class EditPrompts {
 
+  /** Placeholder do template do countertop, substituido pelo nome comercial da pedra. */
+  private static final String PLACEHOLDER_PEDRA = "{{NOME_PEDRA}}";
+
   /**
-   * Prompt de bancada suspensa em granito com cuba embutida e escorredor rebaixado. Referencia
-   * IMAGE 1 (ambiente) e IMAGE 2 (granito). Ordem do multipart no service deve respeitar essa
-   * convencão.
+   * Template de bancada suspensa de pedra com cuba embutida e escorredor rebaixado. Fonte canonica:
+   * {@code prompts/prompt-countertop.md}. Referencia IMAGE 1 (ambiente) e IMAGE 2 (swatch da
+   * pedra). Contem o placeholder {@code {{NOME_PEDRA}}}; para o prompt final use {@link
+   * #countertop(String)}. Ordem do multipart no service deve respeitar essa convencão.
    */
   // CHECKSTYLE.SUPPRESS: LineLength for +24 lines
   public static final String COUNTERTOP =
       """
-      I am sending two images. IMAGE 1: a photo of a real environment (the base scene). IMAGE 2: a close-up swatch of the exact granite material for the new countertop. IMAGE 2 is the single source of truth for the countertop's color and texture — it shows only the material, not a scene, and must not appear as an object in the result.
+      I am sending two images. IMAGE 1: a photo of a real environment (the base scene). IMAGE 2: a close-up swatch of {{NOME_PEDRA}}, the exact stone chosen by the customer for the new countertop. IMAGE 2 is the single source of truth for the countertop's color and texture — it shows only the material, not a scene, and must not appear as an object in the result.
 
       BASE SCENE (IMAGE 1): a real environment. Preserve the entire scene exactly as it appears — walls, floor, windows, doors, wall openings, the room in the background, existing decorations, the natural lighting, and the camera angle. Do not repaint or alter any surface.
 
@@ -19,7 +23,7 @@ public final class EditPrompts {
 
       ADD: a wall-mounted floating countertop made of the exact stone shown in IMAGE 2, in the cleared installation area, against the main wall — centered below the wall opening if there is one. Floating slab fixed directly to the wall — no legs, no side supports, open space underneath showing bare wall and clean floor. Counter height (~80 cm), spanning most of the wall width, with a thick front edge and a low backsplash against the wall.
 
-      SUNKEN DRAINBOARD — THE MOST IMPORTANT STRUCTURAL ELEMENT (a sunken rectangular drainboard area carved into the granite countertop):
+      SUNKEN DRAINBOARD — THE MOST IMPORTANT STRUCTURAL ELEMENT (a sunken rectangular drainboard area carved into the stone countertop):
       - A rectangle carved into the slab, sitting clearly LOWER than the main surface — a real depression, about 2–3 cm deep, like a shallow stone tray. NOT a flat engraved outline, NOT just a thin border line: the surface must actually step down.
       - The recess has visible inner vertical walls around its entire perimeter, where the top surface drops to the lower level. The far inner wall casts a soft shadow onto the recessed floor; the reflections break sharply at the step edge.
       - The recessed floor reflects light differently from the main surface — slightly darker and with its own reflections — so the depth is obvious at first glance.
@@ -28,10 +32,21 @@ public final class EditPrompts {
 
       SINK: a single rectangular stainless steel undermount sink at the exact center of the sunken area, rim below the sunken surface (no top-mount sink). The sunken surface around it works as a drainboard, with equal margins on both sides. Sink, sunken area, and countertop share the same central axis.
 
-      GRANITE MATERIAL — COPY FROM IMAGE 2 (HIGHEST PRIORITY): the entire countertop (slab, front edge, backsplash, inner walls and floor of the sunken area) must look as if it was cut from the exact stone photographed in IMAGE 2. Match IMAGE 2's hue, saturation, crystal pattern, and speckle density precisely — unmistakably GREEN at first glance. If any written description conflicts with IMAGE 2, follow IMAGE 2. Never gray, never plain black, never beige.
+      STONE MATERIAL — COPY FROM IMAGE 2 (HIGHEST PRIORITY): the entire countertop (slab, front edge, backsplash, inner walls and floor of the sunken area) must look as if it was cut from the exact stone photographed in IMAGE 2. Match IMAGE 2's hue, saturation, crystal pattern, and speckle density precisely, so the result is unmistakably the chosen stone at first glance. If any written description conflicts with IMAGE 2, follow IMAGE 2.
 
-      Photorealistic result, same camera angle and same lighting as IMAGE 1. Two things must be clearly visible at first glance: the green granite from IMAGE 2, and the sunken step of the drainboard around the sink.
+      Photorealistic result, same camera angle and same lighting as IMAGE 1. Two things must be clearly visible at first glance: the stone from IMAGE 2, and the sunken step of the drainboard around the sink.
       """;
 
   private EditPrompts() {}
+
+  /**
+   * Interpola o nome comercial da pedra no template do countertop, substituindo o placeholder
+   * {@code {{NOME_PEDRA}}}.
+   *
+   * @param nomePedra nome comercial da pedra (ex.: "Verde Ubatuba")
+   * @return prompt final pronto para o gateway, sem nenhum placeholder remanescente
+   */
+  public static String countertop(String nomePedra) {
+    return COUNTERTOP.replace(PLACEHOLDER_PEDRA, nomePedra);
+  }
 }

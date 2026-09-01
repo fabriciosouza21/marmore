@@ -8,9 +8,11 @@ import com.marmore.api.imageedit.ai.InputImage;
 import com.marmore.api.imageedit.config.ImageEditProperties;
 import com.marmore.api.imageedit.cost.ImageCostCalculator;
 import com.marmore.api.imageedit.cost.UsdBrlProvider;
+import com.marmore.api.imageedit.domain.CatalogoPedras;
 import com.marmore.api.imageedit.domain.EditPrompts;
 import com.marmore.api.imageedit.domain.GenerateResult;
 import com.marmore.api.imageedit.domain.ImageCost;
+import com.marmore.api.imageedit.domain.Pedra;
 import com.marmore.api.imageedit.storage.GeneratedImage;
 import com.marmore.api.imageedit.storage.GeneratedImageRepository;
 import com.marmore.api.imageedit.storage.ImageObjectStorage;
@@ -29,16 +31,17 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * Servico reativo de edicao de imagem. Orquestra as validacoes pre-rede (api-key, pedra em disco,
- * resize do ambiente), monta o {@link ImageEditPrompt}, delega a chamada ao {@link ImageEditModel}
- * (gateway reativo) e computa o custo em BRL. Atua como tradutor entre o contrato do gateway (que
- * propaga erros via {@code Mono#error}) e o contrato interno {@link GenerateResult} (Ok/Err, nunca
- * lanca): nenhum caminho lanca excecao, todas as falhas viram {@link GenerateResult.Err}.
+ * Servico reativo de edicao de imagem. Orquestra as validacoes pre-rede (api-key, pedra no
+ * catalogo, resize do ambiente), monta o {@link ImageEditPrompt}, delega a chamada ao {@link
+ * ImageEditModel} (gateway reativo) e computa o custo em BRL. Atua como tradutor entre o contrato
+ * do gateway (que propaga erros via {@code Mono#error}) e o contrato interno {@link GenerateResult}
+ * (Ok/Err, nunca lanca): nenhum caminho lanca excecao, todas as falhas viram {@link
+ * GenerateResult.Err}.
  *
  * <p>Composicao reativa:
  *
  * <ul>
- *   <li>Validacoes sincronas (api-key, arquivo da pedra em disco) rodam em {@link Mono#defer} na
+ *   <li>Validacoes sincronas (api-key, pedra no catalogo) rodam em {@link Mono#defer} na
  *       subscricao. Falha -> {@link GenerateResult.Err}.
  *   <li>Resize (bloqueante, AWT/Thumbnailator) e leitura dos bytes da pedra (I/O de disco) rodam em
  *       {@link Mono#fromCallable} sobre {@link Schedulers#boundedElastic()} para nao prender o
@@ -63,7 +66,11 @@ public class ImageEditService {
   /** Mensagem para entrada indecodificavel: acionavel pelo cliente, sem detalhe interno. */
   static final String MSG_ENTRADA_INVALIDA = "imagem de entrada invalida ou ilegivel";
 
+  /** Mensagem para id de pedra inexistente no catalogo: erro de negocio estavel. */
+  static final String MSG_PEDRA_NAO_ENCONTRADA = "pedra nao encontrada no catalogo";
+
   private final ImageEditProperties props;
+  private final CatalogoPedras catalogo;
   private final ImageResizer resizer;
   private final ImageEditModel model;
   private final UsdBrlProvider usdBrl;
@@ -73,7 +80,8 @@ public class ImageEditService {
   /**
    * Construtor.
    *
-   * @param props propriedades do modulo (apiKey, stonePath, etc.)
+   * @param props propriedades do modulo (apiKey, pedrasPath, etc.)
+   * @param catalogo catalogo de pedras (resolucao id -> arquivo/nome comercial)
    * @param resizer redimensionador de imagem (bloqueante)
    * @param model gateway de edicao de imagem reativo (OpenAI ou outro)
    * @param usdBrl provedor da cotacao USD->BRL (reativo, com cache/fallback)
@@ -82,12 +90,14 @@ public class ImageEditService {
    */
   public ImageEditService(
       ImageEditProperties props,
+      CatalogoPedras catalogo,
       ImageResizer resizer,
       ImageEditModel model,
       UsdBrlProvider usdBrl,
       ImageObjectStorage storage,
       GeneratedImageRepository repository) {
     this.props = props;
+    this.catalogo = catalogo;
     this.resizer = resizer;
     this.model = model;
     this.usdBrl = usdBrl;
@@ -96,16 +106,18 @@ public class ImageEditService {
   }
 
   /**
-   * Gera/edita imagem a partir dos bytes do ambiente, injetando o prompt fixo e a imagem da pedra.
+   * Gera/edita imagem a partir dos bytes do ambiente e da pedra escolhida no catalogo, injetando o
+   * prompt interpolado com o nome comercial da pedra e a imagem do swatch correspondente.
    *
    * <p>Contrato "never throws": qualquer excecao (validacao, I/O, gateway) vira {@link
    * GenerateResult.Err}. O detalhe da excecao e registrado em log (server-side); o cliente recebe
    * apenas mensagens genericas e estaveis.
    *
    * @param ambiente bytes da foto do ambiente a ser editada
+   * @param pedraId identificador da pedra no catalogo (IMAGE 2)
    * @return {@link Mono} com sucesso (b64 + custo) ou erro; nunca lanca
    */
-  public Mono<GenerateResult> generate(byte[] ambiente) {
+  public Mono<GenerateResult> generate(byte[] ambiente, String pedraId) {
     long[] inicio = {0L};
     return Mono.defer(
             () -> {
@@ -114,60 +126,63 @@ public class ImageEditService {
               if (validacao.isPresent()) {
                 return Mono.just(validacao.get());
               }
-              return prepareInputs(ambiente).flatMap(inputs -> callGateway(inputs, inicio[0]));
+              Optional<Pedra> pedra = catalogo.porId(pedraId);
+              if (pedra.isEmpty()) {
+                log.warn("id de pedra inexistente no catalogo: {}", pedraId);
+                return Mono.just(
+                    (GenerateResult) new GenerateResult.Err(MSG_PEDRA_NAO_ENCONTRADA, 0L));
+              }
+              return prepareInputs(ambiente, pedra.get())
+                  .flatMap(inputs -> callGateway(inputs, pedra.get(), inicio[0]));
             })
         .onErrorResume(error -> Mono.just(toErr(error, inicio[0])));
   }
 
-  /** Validacoes sincronas (api-key presente, pedra em disco). Retorna Err generico ou empty. */
+  /** Validacoes sincronas (api-key presente). Retorna Err generico ou empty. */
   private Optional<GenerateResult.Err> validate() {
     String apiKey = props.getApiKey();
     if (apiKey == null || apiKey.isBlank()) {
       log.warn("OPENAI_API_KEY ausente no ambiente");
       return Optional.of(new GenerateResult.Err(MSG_FALHA_GERACAO, 0L));
     }
-    if (props.getStonePath() == null || !Files.exists(props.getStonePath())) {
-      log.warn("stone-path ausente ou inexistente: {}", props.getStonePath());
-      return Optional.of(new GenerateResult.Err(MSG_FALHA_GERACAO, 0L));
-    }
     return Optional.empty();
   }
 
   /**
-   * Resize do ambiente + leitura dos bytes da pedra, ambos bloqueantes, em boundedElastic. Falha de
-   * decode vira Err.
+   * Resize do ambiente + leitura dos bytes da pedra do catalogo, ambos bloqueantes, em
+   * boundedElastic. Falha de decode vira Err.
    */
-  private Mono<PreparedInputs> prepareInputs(byte[] ambiente) {
+  private Mono<PreparedInputs> prepareInputs(byte[] ambiente, Pedra pedra) {
     return Mono.fromCallable(
             () -> {
               Optional<byte[]> ambienteReduzido = resizer.resize(ambiente);
               if (ambienteReduzido.isEmpty()) {
                 throw new DecodeFailedException();
               }
-              byte[] pedraBytes = readStoneBytes();
+              byte[] pedraBytes = readStoneBytes(pedra);
               return new PreparedInputs(ambienteReduzido.get(), pedraBytes);
             })
         .subscribeOn(Schedulers.boundedElastic());
   }
 
-  /** Le os bytes da pedra do disco. {@link Files#exists} ja validado em {@link #validate}. */
-  private byte[] readStoneBytes() {
+  /** Le os bytes da pedra do diretorio do catalogo. */
+  private byte[] readStoneBytes(Pedra pedra) {
     try {
-      return Files.readAllBytes(props.getStonePath());
+      return Files.readAllBytes(props.getPedrasPath().resolve(pedra.arquivo()));
     } catch (IOException e) {
       throw new StoneReadException(e);
     }
   }
 
   /** Monta o prompt, chama o gateway (medindo latencia), extrai b64 e computa custo. */
-  private Mono<GenerateResult> callGateway(PreparedInputs inputs, long pipelineStart) {
+  private Mono<GenerateResult> callGateway(PreparedInputs inputs, Pedra pedra, long pipelineStart) {
     ImageEditPrompt prompt =
         ImageEditPrompt.of(
-            EditPrompts.COUNTERTOP,
+            EditPrompts.countertop(pedra.nome()),
             AiImageOptions.defaults(),
             List.of(
                 InputImage.of(inputs.ambiente(), "ambiente.jpg"),
-                InputImage.of(inputs.pedra(), nomeDoArquivoDaPedra())));
+                InputImage.of(inputs.pedra(), pedra.arquivo())));
     final long callStart = System.nanoTime();
     return model.call(prompt).flatMap(resp -> toResult(resp, callStart));
   }
@@ -245,12 +260,6 @@ public class ImageEditService {
     }
     final BigDecimal usd = costUsd.get();
     return usdBrl.currentRate().map(rate -> new ImageCost(usd, usd.multiply(rate)));
-  }
-
-  /** Extrai o nome do arquivo da pedra do path configurado (fallback "pedra.png"). */
-  private String nomeDoArquivoDaPedra() {
-    var fileName = props.getStonePath().getFileName();
-    return fileName != null ? fileName.toString() : "pedra.png";
   }
 
   /**

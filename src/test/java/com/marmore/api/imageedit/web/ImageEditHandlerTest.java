@@ -2,6 +2,7 @@ package com.marmore.api.imageedit.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -34,13 +35,16 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>O {@link ImageEditService} e mock para isolar o comportamento do handler. O {@link SseEvents}
  * e real (serializacao real via Jackson) para validar o contrato dos eventos. O metodo
- * package-private {@link ImageEditHandler#stream(byte[])} e exercido diretamente com {@link
+ * package-private {@link ImageEditHandler#stream(byte[], String)} e exercido diretamente com {@link
  * StepVerifier#withVirtualTime} para avancar o relogio sem esperar 15s reais.
  */
 class ImageEditHandlerTest {
 
   private static final tools.jackson.databind.ObjectMapper MAPPER = JsonMapper.builder().build();
   private static final byte[] BYTES = new byte[] {1, 2, 3, 4, 5};
+
+  /** Id de pedra presente no catalogo real carregado pelo contexto (data/pedras). */
+  private static final String PEDRA_ID = "verde_ubatuba";
 
   private ImageEditService service;
   private SseEvents events;
@@ -56,9 +60,9 @@ class ImageEditHandlerTest {
   @DisplayName("sucesso: resultado síncrono emite status×3 -> done -> imagem, sem ping")
   @Test
   void sucessoSincronoEmiteStatusDoneImagemSemPing() {
-    when(service.generate(any(byte[].class))).thenReturn(Mono.just(okResult()));
+    when(service.generate(any(byte[].class), anyString())).thenReturn(Mono.just(okResult()));
 
-    StepVerifier.create(handler.stream(BYTES))
+    StepVerifier.create(handler.stream(BYTES, PEDRA_ID))
         .expectNextMatches(isStatus("recebido"))
         .expectNextMatches(isStatus("redimensionando"))
         .expectNextMatches(isStatus("gerando"))
@@ -70,10 +74,10 @@ class ImageEditHandlerTest {
   @DisplayName("erro de domínio emite status×3 -> error (sem done, sem imagem)")
   @Test
   void erroDeDominioEmiteStatusError() {
-    when(service.generate(any(byte[].class)))
+    when(service.generate(any(byte[].class), anyString()))
         .thenReturn(Mono.just(new GenerateResult.Err("OPENAI_API_KEY ausente", 5L)));
 
-    StepVerifier.create(handler.stream(BYTES))
+    StepVerifier.create(handler.stream(BYTES, PEDRA_ID))
         .expectNextMatches(isStatus("recebido"))
         .expectNextMatches(isStatus("redimensionando"))
         .expectNextMatches(isStatus("gerando"))
@@ -84,10 +88,10 @@ class ImageEditHandlerTest {
   @DisplayName("heartbeat: ping emitido a cada 15s enquanto a geração demora")
   @Test
   void heartbeatEmitePingEnquantoGeracaoDemora() {
-    when(service.generate(any(byte[].class)))
+    when(service.generate(any(byte[].class), anyString()))
         .thenReturn(Mono.delay(Duration.ofSeconds(50)).thenReturn(okResult()));
 
-    StepVerifier.withVirtualTime(() -> handler.stream(BYTES))
+    StepVerifier.withVirtualTime(() -> handler.stream(BYTES, PEDRA_ID))
         .expectNextMatches(isStatus("recebido"))
         .expectNextMatches(isStatus("redimensionando"))
         .expectNextMatches(isStatus("gerando"))
@@ -106,10 +110,10 @@ class ImageEditHandlerTest {
   @DisplayName("heartbeat para no resultado: nenhum ping após done/imagem")
   @Test
   void heartbeatParaImediatamenteQuandoResultadoChega() {
-    when(service.generate(any(byte[].class)))
+    when(service.generate(any(byte[].class), anyString()))
         .thenReturn(Mono.delay(Duration.ofSeconds(20)).thenReturn(okResult()));
 
-    StepVerifier.withVirtualTime(() -> handler.stream(BYTES))
+    StepVerifier.withVirtualTime(() -> handler.stream(BYTES, PEDRA_ID))
         .expectNextMatches(isStatus("recebido"))
         .expectNextMatches(isStatus("redimensionando"))
         .expectNextMatches(isStatus("gerando"))
@@ -139,7 +143,7 @@ class ImageEditHandlerTest {
   void editComFilePartPresenteDevolve200ComSse() {
     FilePart filePart = mock(FilePart.class);
     when(filePart.content()).thenReturn(Flux.just(bufferDe(BYTES)));
-    when(service.generate(any(byte[].class))).thenReturn(Mono.just(okResult()));
+    when(service.generate(any(byte[].class), anyString())).thenReturn(Mono.just(okResult()));
     FormFieldPart pedra = mock(FormFieldPart.class);
     when(pedra.value()).thenReturn("verde_ubatuba");
     ServerRequest request = mock(ServerRequest.class);

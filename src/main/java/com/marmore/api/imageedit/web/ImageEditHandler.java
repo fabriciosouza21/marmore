@@ -93,7 +93,7 @@ public class ImageEditHandler {
   /**
    * Ponto de entrada do endpoint. Valida o campo "pedra" do multipart, le o FilePart "image",
    * converte para bytes (liberando o buffer) e devolve {@code 200 text/event-stream} cujo body e o
-   * fluxo SSE gerado por {@link #stream(byte[])}.
+   * fluxo SSE gerado por {@link #stream(byte[], String)}.
    *
    * @param request pedido HTTP reativo
    * @return {@code Mono} com a resposta, {@code 400} se "pedra" estiver ausente/em branco ou se a
@@ -104,40 +104,44 @@ public class ImageEditHandler {
         .multipartData()
         .flatMap(
             multipart -> {
-              if (!pedraValida(multipart)) {
+              String pedraId = pedraId(multipart);
+              if (pedraId == null) {
                 return badRequest("parte 'pedra' ausente ou em branco no multipart");
               }
               return readImagePart(multipart)
-                  .flatMap(bytes -> buildResponse(stream(bytes)))
+                  .flatMap(bytes -> buildResponse(stream(bytes, pedraId)))
                   .switchIfEmpty(
                       Mono.defer(() -> badRequest("parte 'image' ausente no multipart")));
             });
   }
 
   /**
-   * Verifica a obrigatoriedade do campo de formulario "pedra": precisa chegar como texto ({@link
+   * Extrai o id da pedra do campo de formulario "pedra": precisa chegar como texto ({@link
    * FormFieldPart}) e nao pode ficar em branco apos o trim.
    *
    * @param multipart dados multipart do pedido
-   * @return {@code true} se "pedra" estiver presente e preenchida
+   * @return id da pedra (com trim), ou {@code null} se ausente/em branco
    */
-  private static boolean pedraValida(MultiValueMap<String, Part> multipart) {
+  private static String pedraId(MultiValueMap<String, Part> multipart) {
     Part part = multipart.getFirst("pedra");
     if (!(part instanceof FormFieldPart campo)) {
-      return false;
+      return null;
     }
-    return !campo.value().trim().isEmpty();
+    String valor = campo.value().trim();
+    return valor.isEmpty() ? null : valor;
   }
 
   /**
-   * Fluxo puro de eventos SSE para os bytes dados. Package-private para teste direto com {@link
-   * reactor.test.StepVerifier#withVirtualTime}, sem o custo/complexidade de subir o servidor HTTP.
+   * Fluxo puro de eventos SSE para os bytes e a pedra dados. Package-private para teste direto com
+   * {@link reactor.test.StepVerifier#withVirtualTime}, sem o custo/complexidade de subir o servidor
+   * HTTP.
    *
    * @param bytes bytes da foto do ambiente a editar
+   * @param pedraId identificador da pedra no catalogo
    * @return fluxo de eventos SSE conforme a sequencia do PlantUML
    */
-  Flux<ServerSentEvent<Object>> stream(byte[] bytes) {
-    Mono<GenerateResult> cached = service.generate(bytes).cache();
+  Flux<ServerSentEvent<Object>> stream(byte[] bytes, String pedraId) {
+    Mono<GenerateResult> cached = service.generate(bytes, pedraId).cache();
     Flux<ServerSentEvent<Object>> statuses =
         Flux.just(
             events.status("recebido"), events.status("redimensionando"), events.status("gerando"));
