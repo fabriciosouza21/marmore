@@ -184,7 +184,7 @@ public class ImageEditService {
                 InputImage.of(inputs.ambiente(), "ambiente.jpg"),
                 InputImage.of(inputs.pedra(), pedra.arquivo())));
     final long callStart = System.nanoTime();
-    return model.call(prompt).flatMap(resp -> toResult(resp, callStart));
+    return model.call(prompt).flatMap(resp -> toResult(resp, callStart, pedra));
   }
 
   /**
@@ -192,7 +192,7 @@ public class ImageEditService {
    * custo de forma reativa: falha da cotacao nao derruba a geracao (Ok com custo nulo). No caminho
    * feliz persiste a imagem e devolve o mesmo {@link GenerateResult.Ok}.
    */
-  private Mono<GenerateResult> toResult(ImageResponse resp, long callStart) {
+  private Mono<GenerateResult> toResult(ImageResponse resp, long callStart, Pedra pedra) {
     long latency = ms(callStart);
     Optional<String> b64 = resp.firstB64();
     if (b64.isEmpty()) {
@@ -208,7 +208,7 @@ public class ImageEditService {
         .map(toOkWithCost)
         .onErrorResume(error -> Mono.just(okSemCusto))
         .switchIfEmpty(Mono.just(okSemCusto))
-        .flatMap(this::persistirImagem);
+        .flatMap(resultado -> persistirImagem(resultado, pedra));
   }
 
   /**
@@ -218,7 +218,7 @@ public class ImageEditService {
    * Falha de persistencia (storage ou repositorio) nao derruba a geracao: o mesmo Ok e devolvido e
    * a falha fica registrada em log warn.
    */
-  private Mono<GenerateResult> persistirImagem(GenerateResult resultado) {
+  private Mono<GenerateResult> persistirImagem(GenerateResult resultado, Pedra pedra) {
     if (!(resultado instanceof GenerateResult.Ok ok)) {
       return Mono.just(resultado);
     }
@@ -226,7 +226,7 @@ public class ImageEditService {
         .salvar(Base64.getDecoder().decode(ok.b64()))
         .flatMap(
             objetoKey ->
-                Mono.fromCallable(() -> repository.save(novaImagem(ok, objetoKey)))
+                Mono.fromCallable(() -> repository.save(novaImagem(ok, objetoKey, pedra)))
                     .subscribeOn(Schedulers.boundedElastic()))
         .thenReturn(resultado)
         .onErrorResume(
@@ -236,14 +236,15 @@ public class ImageEditService {
             });
   }
 
-  /** Monta os metadados da imagem gerada a partir do resultado e da key devolvida pelo storage. */
-  private GeneratedImage novaImagem(GenerateResult.Ok ok, String objetoKey) {
+  /** Monta os metadados da imagem gerada a partir do resultado, da pedra e da key do storage. */
+  private GeneratedImage novaImagem(GenerateResult.Ok ok, String objetoKey, Pedra pedra) {
     GeneratedImage imagem = new GeneratedImage();
     imagem.setCriadoEm(Instant.now());
     imagem.setLatenciaMs(ok.latencyMs());
     imagem.setCustoBrl(ok.cost() == null ? null : ok.cost().costBrl());
     imagem.setModelo(props.getDefaultModel());
     imagem.setObjetoKey(objetoKey);
+    imagem.setPedra(pedra.id());
     return imagem;
   }
 

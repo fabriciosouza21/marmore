@@ -34,6 +34,9 @@ public class GeneratedImage {
   /** Key do objeto no storage onde os bytes da imagem estao gravados. */
   private String objetoKey;
 
+  /** Id da pedra escolhida no catalogo no momento da geracao. */
+  private String pedra;
+
   /** Construtor vazio exigido pela JPA; campos preenchidos via setters. */
   public GeneratedImage() {}
 
@@ -83,5 +86,13 @@ public class GeneratedImage {
 
   public void setObjetoKey(String objetoKey) {
     this.objetoKey = objetoKey;
+  }
+
+  public String getPedra() {
+    return pedra;
+  }
+
+  public void setPedra(String pedra) {
+    this.pedra = pedra;
   }
 }
