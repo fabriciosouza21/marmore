@@ -48,6 +48,21 @@ class CorsIntegrationTest {
         .valueEquals(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, ORIGEM_FRONTEND);
   }
 
+  @DisplayName("Preflight do frontend para GET /pedras: 200 com Allow-Methods com GET")
+  @Test
+  void preflightDoGetPedrasEhPermitido() {
+    client
+        .options()
+        .uri("/pedras")
+        .header(HttpHeaders.ORIGIN, ORIGEM_FRONTEND)
+        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET")
+        .exchange()
+        .expectStatus()
+        .isOk()
+        .expectHeader()
+        .valueMatches(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS, ".*GET.*");
+  }
+
   @DisplayName("Request real de origem permitida carrega Allow-Origin mesmo sem API key (401)")
   @Test
   void requestRealDaOrigemPermitidaRecebeHeaderCors() {

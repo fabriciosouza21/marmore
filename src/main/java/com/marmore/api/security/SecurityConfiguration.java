@@ -54,9 +54,9 @@ public class SecurityConfiguration {
   }
 
   /**
-   * Politica de CORS: so a origem do frontend, so POST (a edicao de imagem), headers que o cliente
-   * envia ({@code X-API-Key}, {@code Content-Type} do multipart e {@code Accept} do SSE). Sem
-   * credentials (autenticacao por header, nao por cookie).
+   * Politica de CORS: so a origem do frontend, so GET (catalogo de pedras e imagens) e POST (a
+   * edicao de imagem), headers que o cliente envia ({@code X-API-Key}, {@code Content-Type} do
+   * multipart e {@code Accept} do SSE). Sem credentials (autenticacao por header, nao por cookie).
    *
    * @return fonte de configuracao usada pelo filtro de CORS do Spring Security
    */
@@ -64,7 +64,7 @@ public class SecurityConfiguration {
   CorsConfigurationSource corsConfigurationSource() {
     CorsConfiguration politica = new CorsConfiguration();
     politica.setAllowedOrigins(List.of(ORIGEM_FRONTEND));
-    politica.setAllowedMethods(List.of("POST"));
+    politica.setAllowedMethods(List.of("GET", "POST"));
     politica.setAllowedHeaders(List.of("X-API-Key", "Content-Type", "Accept"));
     UrlBasedCorsConfigurationSource fonte = new UrlBasedCorsConfigurationSource();
     fonte.registerCorsConfiguration("/**", politica);
