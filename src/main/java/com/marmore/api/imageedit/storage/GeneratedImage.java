@@ -37,6 +37,9 @@ public class GeneratedImage {
   /** Id da pedra escolhida no catalogo no momento da geracao. */
   private String pedra;
 
+  /** Id do produto usado na geracao. */
+  private String produto;
+
   /** Construtor vazio exigido pela JPA; campos preenchidos via setters. */
   public GeneratedImage() {}
 
@@ -94,5 +97,13 @@ public class GeneratedImage {
 
   public void setPedra(String pedra) {
     this.pedra = pedra;
+  }
+
+  public String getProduto() {
+    return produto;
+  }
+
+  public void setProduto(String produto) {
+    this.produto = produto;
   }
 }

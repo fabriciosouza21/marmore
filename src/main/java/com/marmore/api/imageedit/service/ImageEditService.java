@@ -13,6 +13,7 @@ import com.marmore.api.imageedit.domain.EditPrompts;
 import com.marmore.api.imageedit.domain.GenerateResult;
 import com.marmore.api.imageedit.domain.ImageCost;
 import com.marmore.api.imageedit.domain.Pedra;
+import com.marmore.api.imageedit.domain.Produto;
 import com.marmore.api.imageedit.storage.GeneratedImage;
 import com.marmore.api.imageedit.storage.GeneratedImageRepository;
 import com.marmore.api.imageedit.storage.ImageObjectStorage;
@@ -245,6 +246,7 @@ public class ImageEditService {
     imagem.setModelo(props.getDefaultModel());
     imagem.setObjetoKey(objetoKey);
     imagem.setPedra(pedra.id());
+    imagem.setProduto(Produto.PIA_AMERICANA.id());
     return imagem;
   }
 

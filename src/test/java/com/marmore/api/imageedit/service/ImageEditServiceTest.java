@@ -229,6 +229,18 @@ class ImageEditServiceTest {
     assertThat(captorImagem.getValue().getPedra()).isEqualTo("calacatta");
   }
 
+  @DisplayName("sucesso: persiste imagem com o produto usado na geracao")
+  @Test
+  void sucessoPersisteImagemComProdutoUsadoNaGeracao() throws Exception {
+    when(model.call(any())).thenReturn(monoJust(respostaComB64("aA==")));
+
+    service.generate(TestImages.ambiente(), "calacatta").block();
+
+    ArgumentCaptor<GeneratedImage> captorImagem = ArgumentCaptor.forClass(GeneratedImage.class);
+    verify(repository).save(captorImagem.capture());
+    assertThat(captorImagem.getValue().getProduto()).isEqualTo("pia-americana");
+  }
+
   @DisplayName("falha no storage nao quebra o fluxo: retorna Ok e nao grava no repositorio")
   @Test
   void falhaNoStorageMantemOkSemChamarRepositorio() throws Exception {
