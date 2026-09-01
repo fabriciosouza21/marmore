@@ -18,6 +18,9 @@ info:
         da pedra escolhida (parte `pedra`); o backend resolve a imagem da
         pedra no catalogo, interpola o nome comercial no prompt e envia
         ambiente + pedra ao gateway de IA; devolve o resultado como SSE.
+      - `GET /images`: resumos dos metadados das imagens geradas (mais
+        recentes primeiro), com a pedra e o produto usados.
+      - `GET /images/{id}/arquivo`: bytes PNG da imagem gerada.
 
     Autenticacao stateless por API key no header `X-API-Key`.
   license:
@@ -36,6 +39,81 @@ tags:
     description: Catalogo de pedras
 
 paths:
+  /images:
+    get:
+      tags: [Imagem]
+      operationId: listaImagensGeradas
+      summary: Lista os metadados das imagens geradas
+      description: |
+        Resumos dos metadados das imagens geradas com sucesso, mais
+        recentes primeiro. A imagem em si vem de
+        `GET /images/{id}/arquivo`.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Lista de resumos, mais recentes primeiro.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ImagemGeradaResumo'
+              example:
+                - id: 3f8e2c1a-9b4d-4c3e-a1b2-cd5e6f708192
+                  criado_em: '2026-09-01T14:32:00Z'
+                  modelo: gpt-image-1
+                  custo_brl: 0.27
+                  latencia_ms: 12345
+                  pedra: verde_ubatuba
+                  produto: pia-americana
+                  nome_produto: Pia americana
+        '401':
+          description: API key ausente ou invalida no header `X-API-Key`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /images/{id}/arquivo:
+    get:
+      tags: [Imagem]
+      operationId: arquivoDaImagemGerada
+      summary: Bytes PNG da imagem gerada
+      description: |
+        Bytes da imagem baixados do object storage, servidos como
+        `image/png`. Usado pela galeria do frontend para exibir a imagem.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Id da imagem gerada (vindo de `GET /images`).
+      responses:
+        '200':
+          description: Bytes da imagem.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Id malformado ou inexistente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: API key ausente ou invalida no header `X-API-Key`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /pedras:
     get:
       tags: [Pedra]
@@ -259,6 +337,47 @@ components:
       description: Obrigatorio pelo predicado do router.
 
   schemas:
+    ImagemGeradaResumo:
+      type: object
+      required: [id, criado_em, modelo, latencia_ms]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Id da imagem gerada (usado em `GET /images/{id}/arquivo`).
+        criado_em:
+          type: string
+          format: date-time
+          description: Momento da gravacao do metadado (ISO-8601).
+        modelo:
+          type: string
+          description: Modelo de IA usado na geracao.
+        custo_brl:
+          type: number
+          format: double
+          nullable: true
+          description: Custo em BRL; `null` quando nao foi possivel calcular.
+        latencia_ms:
+          type: integer
+          format: int64
+          description: Latencia da geracao, em milissegundos.
+        pedra:
+          type: string
+          nullable: true
+          description: Id da pedra escolhida no catalogo no momento da geracao.
+        produto:
+          type: string
+          nullable: true
+          description: |
+            Id do produto usado na geracao (ex.: `pia-americana`). `null`
+            em imagens geradas antes do produto existir.
+        nome_produto:
+          type: string
+          nullable: true
+          description: |
+            Nome de exibicao do produto, resolvido do catalogo. `null` quando
+            o produto nao esta gravado ou nao e reconhecido.
+
     PedraResumo:
       type: object
       required: [id, nome, categoria]
