@@ -11,8 +11,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * marmore.openai.image}.
  *
  * <p>Validacao na inicializacao ({@link #validar()}): se a API key estiver ausente/em branco ou o
- * stone-path estiver nulo, o contexto falha (fail-fast). A existencia do arquivo da pedra em disco
- * e validada por uso, no {@code ImageEditService}.
+ * stone-path/pedras-path estiverem nulos, o contexto falha (fail-fast). A existencia do arquivo da
+ * pedra em disco e validada por uso, no {@code ImageEditService}.
  */
 @ConfigurationProperties(prefix = "marmore.openai.image")
 public class ImageEditProperties {
@@ -22,8 +22,9 @@ public class ImageEditProperties {
   private String defaultModel = ImageModel.GPT_IMAGE_2.apiValue();
   private Duration timeout = Duration.ofSeconds(180);
   private Path stonePath;
+  private Path pedrasPath;
 
-  /** Valida na inicializacao que a chave e o stone-path estao definidos. */
+  /** Valida na inicializacao que a chave, o stone-path e o pedras-path estao definidos. */
   @PostConstruct
   void validar() {
     if (apiKey == null || apiKey.isBlank()) {
@@ -32,6 +33,9 @@ public class ImageEditProperties {
     }
     if (stonePath == null) {
       throw new IllegalStateException("marmore.openai.image.stone-path ausente.");
+    }
+    if (pedrasPath == null) {
+      throw new IllegalStateException("marmore.openai.image.pedras-path ausente.");
     }
   }
 
@@ -78,5 +82,14 @@ public class ImageEditProperties {
 
   public void setStonePath(Path stonePath) {
     this.stonePath = stonePath;
+  }
+
+  /** Retorna o diretorio do catalogo de pedras. */
+  public Path getPedrasPath() {
+    return pedrasPath;
+  }
+
+  public void setPedrasPath(Path pedrasPath) {
+    this.pedrasPath = pedrasPath;
   }
 }

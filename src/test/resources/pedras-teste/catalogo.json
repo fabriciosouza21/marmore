@@ -1,0 +1,16 @@
+{
+  "pedras": [
+    {
+      "id": "verde_ubatuba",
+      "nome": "Verde Ubatuba",
+      "categoria": "Granitos",
+      "arquivo": "verde_ubatuba.png"
+    },
+    {
+      "id": "calacatta",
+      "nome": "Calacatta",
+      "categoria": "Marmores",
+      "arquivo": "calacatta.jpeg"
+    }
+  ]
+}

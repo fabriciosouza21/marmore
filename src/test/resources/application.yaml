@@ -39,6 +39,7 @@ marmore:
     image:
       api-key: ignored
       stone-path: ${user.dir}/data/granito.png
+      pedras-path: ${user.dir}/data/pedras
   cost:
     usd-brl:
       url: https://economia.awesomeapi.com.br/json/last/USD-BRL

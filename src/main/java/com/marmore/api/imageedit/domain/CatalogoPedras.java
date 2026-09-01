@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -29,6 +30,16 @@ public class CatalogoPedras {
   /** Retorna as pedras na ordem definida no catalogo. */
   public List<Pedra> listar() {
     return pedras;
+  }
+
+  /**
+   * Retorna a pedra com o id informado, ou vazio se inexistente no catalogo.
+   *
+   * @param id identificador da pedra
+   * @return pedra encontrada, ou vazio
+   */
+  public Optional<Pedra> porId(String id) {
+    return pedras.stream().filter(pedra -> pedra.id().equals(id)).findFirst();
   }
 
   private static List<Pedra> carregar(Path diretorio) {
