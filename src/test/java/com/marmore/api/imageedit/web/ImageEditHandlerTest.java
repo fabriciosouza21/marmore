@@ -17,6 +17,7 @@ import org.springframework.core.io.buffer.DefaultDataBufferFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.http.codec.multipart.FilePart;
+import org.springframework.http.codec.multipart.FormFieldPart;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
@@ -139,10 +140,15 @@ class ImageEditHandlerTest {
     FilePart filePart = mock(FilePart.class);
     when(filePart.content()).thenReturn(Flux.just(bufferDe(BYTES)));
     when(service.generate(any(byte[].class))).thenReturn(Mono.just(okResult()));
+    FormFieldPart pedra = mock(FormFieldPart.class);
+    when(pedra.value()).thenReturn("verde_ubatuba");
     ServerRequest request = mock(ServerRequest.class);
     when(request.multipartData())
         .thenReturn(
-            Mono.just(new LinkedMultiValueMap<>(Map.of("image", java.util.List.of(filePart)))));
+            Mono.just(
+                new LinkedMultiValueMap<>(
+                    Map.of(
+                        "image", java.util.List.of(filePart), "pedra", java.util.List.of(pedra)))));
 
     ServerResponse response = handler.edit(request).block();
 

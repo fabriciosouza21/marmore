@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.http.codec.multipart.FilePart;
+import org.springframework.http.codec.multipart.FormFieldPart;
 import org.springframework.http.codec.multipart.Part;
 import org.springframework.stereotype.Component;
 import org.springframework.util.MultiValueMap;
@@ -65,7 +66,9 @@ import reactor.core.publisher.Mono;
  * O buffer e liberado dentro de {@code readBytes} (no {@code finally}) para evitar leak em qualquer
  * caminho (sucesso, erro, cancelamento).
  *
- * <p>Se a parte "image" estiver ausente, responde {@code 400 BAD_REQUEST}.
+ * <p>O campo de formulario "pedra" e obrigatorio: ausente ou em branco (so espacos) responde {@code
+ * 400 BAD_REQUEST} antes de abrir o stream (sem acionar o service/gateway). Se a parte "image"
+ * estiver ausente, responde {@code 400 BAD_REQUEST}.
  */
 @Component
 public class ImageEditHandler {
@@ -88,19 +91,42 @@ public class ImageEditHandler {
   }
 
   /**
-   * Ponto de entrada do endpoint. Le o FilePart "image" do multipart, converte para bytes
-   * (liberando o buffer) e devolve {@code 200 text/event-stream} cujo body e o fluxo SSE gerado por
-   * {@link #stream(byte[])}.
+   * Ponto de entrada do endpoint. Valida o campo "pedra" do multipart, le o FilePart "image",
+   * converte para bytes (liberando o buffer) e devolve {@code 200 text/event-stream} cujo body e o
+   * fluxo SSE gerado por {@link #stream(byte[])}.
    *
    * @param request pedido HTTP reativo
-   * @return {@code Mono} com a resposta, ou {@code 400} se a parte "image" estiver ausente
+   * @return {@code Mono} com a resposta, {@code 400} se "pedra" estiver ausente/em branco ou se a
+   *     parte "image" estiver ausente
    */
   public Mono<ServerResponse> edit(ServerRequest request) {
     return request
         .multipartData()
-        .flatMap(this::readImagePart)
-        .flatMap(bytes -> buildResponse(stream(bytes)))
-        .switchIfEmpty(Mono.defer(() -> badRequest()));
+        .flatMap(
+            multipart -> {
+              if (!pedraValida(multipart)) {
+                return badRequest("parte 'pedra' ausente ou em branco no multipart");
+              }
+              return readImagePart(multipart)
+                  .flatMap(bytes -> buildResponse(stream(bytes)))
+                  .switchIfEmpty(
+                      Mono.defer(() -> badRequest("parte 'image' ausente no multipart")));
+            });
+  }
+
+  /**
+   * Verifica a obrigatoriedade do campo de formulario "pedra": precisa chegar como texto ({@link
+   * FormFieldPart}) e nao pode ficar em branco apos o trim.
+   *
+   * @param multipart dados multipart do pedido
+   * @return {@code true} se "pedra" estiver presente e preenchida
+   */
+  private static boolean pedraValida(MultiValueMap<String, Part> multipart) {
+    Part part = multipart.getFirst("pedra");
+    if (!(part instanceof FormFieldPart campo)) {
+      return false;
+    }
+    return !campo.value().trim().isEmpty();
   }
 
   /**
@@ -170,10 +196,10 @@ public class ImageEditHandler {
         .body(sse, ServerSentEvent.class);
   }
 
-  /** Resposta {@code 400 BAD_REQUEST} para parte "image" ausente. */
-  private static Mono<ServerResponse> badRequest() {
+  /** Resposta {@code 400 BAD_REQUEST} com mensagem de validacao estavel. */
+  private static Mono<ServerResponse> badRequest(String mensagem) {
     return ServerResponse.status(HttpStatus.BAD_REQUEST)
         .contentType(MediaType.APPLICATION_JSON)
-        .bodyValue(Map.of("error", "parte 'image' ausente no multipart"));
+        .bodyValue(Map.of("error", mensagem));
   }
 }

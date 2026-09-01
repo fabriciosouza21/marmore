@@ -3,6 +3,7 @@ package com.marmore.api.imageedit.web;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.marmore.api.imageedit.TestImages;
@@ -81,11 +82,16 @@ class ImageEditSseIntegrationTest {
   /** Timeout do {@link StepVerifier} e do cliente: a conclusao chega em poucos segundos. */
   private static final Duration VERIFICACAO_TIMEOUT = Duration.ofSeconds(30);
 
+  /** Id de pedra existente no catalogo real carregado em teste via {@code data/pedras}. */
+  private static final String PEDRA_FIXA = "verde_ubatuba";
+
   @LocalServerPort private int porta;
 
   @Autowired private ImageObjectStorage storage;
 
   @Autowired private GeneratedImageRepository repository;
+
+  @Autowired private ImageEditModel imageEditModel;
 
   /**
    * Aponta {@code marmore.openai.image.stone-path} para um PNG minimal em {@code
@@ -203,10 +209,77 @@ class ImageEditSseIntegrationTest {
         .isUnauthorized();
   }
 
-  /** Constroi o multipart com a parte "image" (foto do ambiente) a partir dos bytes dados. */
+  @DisplayName("parte pedra ausente no multipart -> 400 JSON sem chamar o gateway")
+  @Test
+  void pedraAusenteRetorna400SemChamarGateway() throws Exception {
+    // Mock compartilhado entre testes: zera interacoes pre-existentes e restaura o stub para os
+    // demais testes, independente da ordem de execucao.
+    Mockito.reset(imageEditModel);
+    when(imageEditModel.call(any())).thenReturn(Mono.just(respostaFixa()));
+
+    cliente()
+        .post()
+        .uri("/images/edit")
+        .header("X-API-Key", API_KEY_VALIDA)
+        .accept(MediaType.TEXT_EVENT_STREAM)
+        .contentType(MediaType.MULTIPART_FORM_DATA)
+        .body(BodyInserters.fromMultipartData(multipartAmbiente(TestImages.ambiente(), null)))
+        .exchange()
+        .expectStatus()
+        .isBadRequest()
+        .expectHeader()
+        .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+        .expectBody()
+        .jsonPath("$.error")
+        .isNotEmpty();
+
+    verifyNoInteractions(imageEditModel);
+  }
+
+  @DisplayName("parte pedra em branco -> 400 JSON sem chamar o gateway")
+  @Test
+  void pedraEmBrancoRetorna400SemChamarGateway() throws Exception {
+    // Mock compartilhado entre testes: zera interacoes pre-existentes e restaura o stub para os
+    // demais testes, independente da ordem de execucao.
+    Mockito.reset(imageEditModel);
+    when(imageEditModel.call(any())).thenReturn(Mono.just(respostaFixa()));
+
+    cliente()
+        .post()
+        .uri("/images/edit")
+        .header("X-API-Key", API_KEY_VALIDA)
+        .accept(MediaType.TEXT_EVENT_STREAM)
+        .contentType(MediaType.MULTIPART_FORM_DATA)
+        .body(BodyInserters.fromMultipartData(multipartAmbiente(TestImages.ambiente(), "   ")))
+        .exchange()
+        .expectStatus()
+        .isBadRequest()
+        .expectHeader()
+        .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+        .expectBody()
+        .jsonPath("$.error")
+        .isNotEmpty();
+
+    verifyNoInteractions(imageEditModel);
+  }
+
+  /** Constroi o multipart com "image" e o campo de formulario "pedra" ({@link #PEDRA_FIXA}). */
   private static MultiValueMap<String, HttpEntity<?>> multipartAmbiente(byte[] ambiente) {
+    return multipartAmbiente(ambiente, PEDRA_FIXA);
+  }
+
+  /**
+   * Constroi o multipart com a parte "image" (foto do ambiente) e o campo de formulario "pedra"
+   * ({@code null} = parte ausente, para exercitar a validacao do contrato).
+   */
+  private static MultiValueMap<String, HttpEntity<?>> multipartAmbiente(
+      byte[] ambiente, String pedra) {
     MultipartBodyBuilder builder = new MultipartBodyBuilder();
     builder.part("image", ambiente).filename("ambiente.png").contentType(MediaType.IMAGE_PNG);
+    if (pedra != null) {
+      // text/plain: o leitor multipart do WebFlux interpreta como FormFieldPart (campo de texto).
+      builder.part("pedra", pedra, MediaType.TEXT_PLAIN);
+    }
     return builder.build();
   }
 
@@ -234,11 +307,16 @@ class ImageEditSseIntegrationTest {
   @TestConfiguration
   static class TestMocks {
 
-    /** Gateway mockado: devolve {@link ImageEditSseIntegrationTest#respostaFixa()} sempre. */
+    /**
+     * Gateway mockado com Mockito (para permitir {@code verifyNoInteractions}): devolve {@link
+     * ImageEditSseIntegrationTest#respostaFixa()} sempre.
+     */
     @Bean
     @Primary
     ImageEditModel mockImageEditModel() {
-      return prompt -> Mono.just(respostaFixa());
+      ImageEditModel model = Mockito.mock(ImageEditModel.class);
+      when(model.call(any())).thenReturn(Mono.just(respostaFixa()));
+      return model;
     }
 
     /** Provedor de cotacao mockado: devolve 5.00 sempre, sem chamar a AwesomeAPI. */
