@@ -1,0 +1,10 @@
+target/
+.git/
+.idea/
+.settings/
+.classpath
+.project
+.zcode/
+.handoff/
+*.iml
+.env
