@@ -14,7 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
       "marmore.openai.image.api-key=chave-teste",
       "marmore.openai.image.default-model=gpt-image-1.5",
       "marmore.openai.image.timeout=30s",
-      "marmore.openai.image.stone-path=/tmp/pedra.png"
+      "marmore.openai.image.pedras-path=${user.dir}/data/pedras"
     })
 class ImageEditPropertiesTest {
 
@@ -26,6 +26,7 @@ class ImageEditPropertiesTest {
     assertThat(props.getApiKey()).isEqualTo("chave-teste");
     assertThat(props.getDefaultModel()).isEqualTo("gpt-image-1.5");
     assertThat(props.getTimeout()).isEqualTo(Duration.ofSeconds(30));
-    assertThat(props.getStonePath()).isEqualTo(java.nio.file.Paths.get("/tmp/pedra.png"));
+    assertThat(props.getPedrasPath())
+        .isEqualTo(java.nio.file.Paths.get(System.getProperty("user.dir"), "data", "pedras"));
   }
 }

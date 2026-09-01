@@ -36,7 +36,6 @@ marmore:
       api-key: ${spring.ai.openai.api-key:}
       default-model: gpt-image-2
       timeout: 180s
-      stone-path: ${user.dir}/data/granito.png
       pedras-path: ${user.dir}/data/pedras
   cost:
     usd-brl:

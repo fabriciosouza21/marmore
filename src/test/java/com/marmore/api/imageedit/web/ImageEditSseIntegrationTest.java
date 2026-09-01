@@ -55,8 +55,8 @@ import tools.jackson.databind.JsonNode;
  * <p>O gateway OpenAI ({@link ImageEditModel}) e mockado por {@link TestMocks} via
  * {@code @Bean @Primary} para devolver um {@link ImageResponse} fixo (sem chamada de rede). O
  * {@link UsdBrlProvider} tambem e substituido por um stub que devolve cotacao fixa (sem chamar a
- * AwesomeAPI). O {@code stone-path} e apontado para um recurso de teste (PNG minimal) via {@link
- * DynamicPropertySource}, mantendo o {@code data/} do repositorio limpo.
+ * AwesomeAPI). O catalogo de pedras e o real de {@code data/pedras} (a fixture envia a pedra {@code
+ * verde_ubatuba}).
  *
  * <p>O {@link ImageObjectStorage} e o {@link GeneratedImageRepository} tambem sao mockados via
  * {@code @Primary}, tornando o fluxo de persistencia hermetico (sem MinIO nem H2 real) e permitindo
@@ -94,22 +94,11 @@ class ImageEditSseIntegrationTest {
   @Autowired private ImageEditModel imageEditModel;
 
   /**
-   * Aponta {@code marmore.openai.image.stone-path} para um PNG minimal em {@code
-   * src/test/resources/test-images/granito-test.png}, resolvido como caminho absoluta em runtime, e
-   * define {@code api-key} para satisfazer a validacao do service (o gateway e mockado, mas o
+   * Define {@code api-key} para satisfazer a validacao do service (o gateway e mockado, mas o
    * {@link com.marmore.api.imageedit.service.ImageEditService} checa a chave antes de chamar).
    */
   @DynamicPropertySource
-  static void sobrescreveStonePath(DynamicPropertyRegistry registro) {
-    registro.add(
-        "marmore.openai.image.stone-path",
-        () -> {
-          try {
-            return TestImages.granitoPath().toAbsolutePath().toString();
-          } catch (Exception e) {
-            throw new IllegalStateException("granito-test.png ausente do classpath de teste", e);
-          }
-        });
+  static void sobrescreveApiKey(DynamicPropertyRegistry registro) {
     registro.add("marmore.openai.image.api-key", () -> "test-key-nao-usado-gateway-mockado");
   }
 

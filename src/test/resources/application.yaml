@@ -38,7 +38,6 @@ marmore:
   openai:
     image:
       api-key: ignored
-      stone-path: ${user.dir}/data/granito.png
       pedras-path: ${user.dir}/data/pedras
   cost:
     usd-brl:
