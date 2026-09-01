@@ -15,4 +15,5 @@ record ImageGenerationSummary(
     @JsonProperty("criado_em") Instant criadoEm,
     String modelo,
     @JsonProperty("custo_brl") BigDecimal custoBrl,
-    @JsonProperty("latencia_ms") long latenciaMs) {}
+    @JsonProperty("latencia_ms") long latenciaMs,
+    String pedra) {}

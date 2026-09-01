@@ -54,7 +54,8 @@ public class ImageHistoryHandler {
                                 imagem.getCriadoEm(),
                                 imagem.getModelo(),
                                 imagem.getCustoBrl(),
-                                imagem.getLatenciaMs()))
+                                imagem.getLatenciaMs(),
+                                imagem.getPedra()))
                     .toList())
         .flatMap(
             resumos ->
