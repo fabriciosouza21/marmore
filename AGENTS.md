@@ -8,6 +8,20 @@ Seguir Conventional Commits.
 
 Seguir Semantic Versioning. Tags no formato `X.Y.Z` mantidas em sincronia com `<version>` do `pom.xml`.
 
+## Healthcheck e versao
+
+`GET /health` e publico (sem `X-API-Key`) e responde `{"status":"ok","version":"<versao>"}`.
+A versao vem do `<version>` do `pom.xml` via goal `build-info` do spring-boot-maven-plugin
+(bean `BuildProperties`); nao existe versao hardcoded em codigo. O healthcheck do container
+na stack de deploy usa esse endpoint, e a versao no ar se consulta com:
+
+```bash
+curl https://api.marmoraria.fsmdevs.com/health
+```
+
+Bumpar a versao = alterar `<version>` do pom (e tag correspondente); o `/health` acompanha
+no proximo build/deploy da imagem.
+
 ## Branches
 
 Seguir GitFlow.
