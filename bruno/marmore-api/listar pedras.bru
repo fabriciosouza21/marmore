@@ -1,0 +1,15 @@
+meta {
+  name: listar pedras
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/pedras
+  body: none
+  auth: inherit
+}
+
+headers {
+  X-API-Key: {{marmore_api_key}}
+}

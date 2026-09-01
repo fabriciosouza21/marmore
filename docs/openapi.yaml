@@ -5,18 +5,19 @@ info:
   version: 0.0.1
   description: |
     API de edicao de imagem do projeto marmore. Gera uma versao da foto do
-    ambiente com a pedra (granito) aplicada ao Balcao, via modelo de edicao
+    ambiente com a pedra escolhida aplicada ao Balcao, via modelo de edicao
     de imagem da OpenAI (gpt-image).
 
     Stack: Spring Boot 4.1, Java 26, WebFlux (router funcional).
 
-    Fluxo do unico endpoint, `POST /images/edit`:
-      1. recebe a foto do ambiente como parte `image` do multipart;
-      2. redimensiona o ambiente (Thumbnailator) e le a pedra do disco
-         (caminho configuravel em `marmore.openai.image.stone-path`,
-         padrao `data/granito.png`);
-      3. envia ambiente + pedra ao gateway de IA com o prompt fixo de Balcao;
-      4. devolve o resultado como stream SSE.
+    Endpoints:
+      - `GET /pedras`: catalogo de pedras (id, nome comercial, categoria),
+        alimentado por `data/pedras/catalogo.json` no servidor.
+      - `GET /pedras/{id}/imagem`: bytes da imagem de referencia da pedra.
+      - `POST /images/edit`: recebe a foto do ambiente (parte `image`) e o id
+        da pedra escolhida (parte `pedra`); o backend resolve a imagem da
+        pedra no catalogo, interpola o nome comercial no prompt e envia
+        ambiente + pedra ao gateway de IA; devolve o resultado como SSE.
 
     Autenticacao stateless por API key no header `X-API-Key`.
   license:
@@ -31,8 +32,87 @@ servers:
 tags:
   - name: Imagem
     description: Geracao/edicao de imagem
+  - name: Pedra
+    description: Catalogo de pedras
 
 paths:
+  /pedras:
+    get:
+      tags: [Pedra]
+      operationId: listaPedras
+      summary: Lista as pedras do catalogo
+      description: |
+        Catalogo carregado do servidor (`data/pedras/catalogo.json`), na
+        ordem do arquivo. Usado pelo seletor do frontend; o campo `arquivo`
+        do catalogo e interno e nao e exposto.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Lista de pedras na ordem do catalogo.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PedraResumo'
+              example:
+                - id: verde_ubatuba
+                  nome: Verde Ubatuba
+                  categoria: Granitos
+                - id: branco_dallas
+                  nome: Branco Dallas
+                  categoria: Granitos
+        '401':
+          description: API key ausente ou invalida no header `X-API-Key`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pedras/{id}/imagem:
+    get:
+      tags: [Pedra]
+      operationId: imagemDaPedra
+      summary: Imagem de referencia da pedra
+      description: |
+        Bytes do arquivo de imagem da pedra no catalogo, com Content-Type
+        conforme a extensao (image/png ou image/jpeg). Amostra visual do
+        seletor do frontend.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Id da pedra no catalogo (ex.: `verde_ubatuba`).
+      responses:
+        '200':
+          description: Bytes da imagem da pedra.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Id inexistente no catalogo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: API key ausente ou invalida no header `X-API-Key`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /images/edit:
     post:
       tags: [Imagem]
@@ -77,9 +157,11 @@ paths:
         problemas de contrato (sem a parte `image`) e de autenticacao
         viram 400/401 fora do stream.
 
-        A pedra de referencia (`granito.png`) e lida do disco em
-        `${marmore.openai.image.stone-path}` (padrao `data/granito.png`),
-        nao enviada no multipart.
+        A pedra de referencia e resolvida no catalogo do servidor pelo id
+        recebido na parte `pedra` (imagem lida de `data/pedras/`), e o nome
+        comercial da pedra e interpolado no prompt. Pedra sem id valido no
+        catalogo vira evento SSE `error` ("pedra nao encontrada no
+        catalogo"), sem chamar o gateway.
       security:
         - ApiKeyAuth: []
       requestBody:
@@ -88,12 +170,18 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [image]
+              required: [image, pedra]
               properties:
                 image:
                   type: string
                   format: binary
                   description: Foto do ambiente a editar (JPG/PNG).
+                pedra:
+                  type: string
+                  description: |
+                    Id da pedra escolhida no catalogo (ex.: `verde_ubatuba`).
+                    Veja `GET /pedras`. Obrigatorio; ausente ou em branco
+                    responde 400 fora do stream.
             encoding:
               image:
                 contentType: image/png, image/jpeg
@@ -129,13 +217,18 @@ paths:
                     event:ping
                     data:{"error":"unable to decode input image","latency_ms":120}
         '400':
-          description: Parte `image` ausente no multipart.
+          description: Parte `image` ou campo `pedra` ausente/em branco no multipart.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error: "parte 'image' ausente no multipart"
+              examples:
+                sem_pedra:
+                  value:
+                    error: "parte 'pedra' ausente ou em branco no multipart"
+                sem_image:
+                  value:
+                    error: "parte 'image' ausente no multipart"
         '401':
           description: API key ausente ou invalida no header `X-API-Key`.
           content:
@@ -166,6 +259,20 @@ components:
       description: Obrigatorio pelo predicado do router.
 
   schemas:
+    PedraResumo:
+      type: object
+      required: [id, nome, categoria]
+      properties:
+        id:
+          type: string
+          description: Identificador estavel da pedra (enviado na parte `pedra` do multipart).
+        nome:
+          type: string
+          description: Nome comercial (ex.: Cafe Imperial).
+        categoria:
+          type: string
+          description: Categoria do catalogo (ex.: Granitos, Marmores).
+
     ErrorResponse:
       type: object
       required: [error]

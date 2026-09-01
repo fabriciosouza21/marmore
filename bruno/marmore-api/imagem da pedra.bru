@@ -1,0 +1,15 @@
+meta {
+  name: imagem da pedra
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/pedras/verde_ubatuba/imagem
+  body: none
+  auth: inherit
+}
+
+headers {
+  X-API-Key: {{marmore_api_key}}
+}
