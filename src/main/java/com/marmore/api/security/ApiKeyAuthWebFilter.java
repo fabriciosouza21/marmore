@@ -3,6 +3,7 @@ package com.marmore.api.security;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.Set;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -26,6 +27,9 @@ public class ApiKeyAuthWebFilter implements WebFilter {
   /** Nome do header HTTP que carrega a API key. */
   public static final String HEADER = "X-API-Key";
 
+  /** Paths publicos (seguem a chain sem autenticar): healthcheck de liveness/versao. */
+  private static final Set<String> PATHS_PUBLICOS = Set.of("/health");
+
   private static final byte[] CORPO_401 =
       "{\"error\":\"API key ausente ou invalida\"}".getBytes(StandardCharsets.UTF_8);
 
@@ -42,6 +46,9 @@ public class ApiKeyAuthWebFilter implements WebFilter {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+    if (PATHS_PUBLICOS.contains(exchange.getRequest().getPath().value())) {
+      return chain.filter(exchange);
+    }
     String fornecida = exchange.getRequest().getHeaders().getFirst(HEADER);
     String esperada = props.getKey();
     if (chaveConfere(fornecida, esperada)) {
