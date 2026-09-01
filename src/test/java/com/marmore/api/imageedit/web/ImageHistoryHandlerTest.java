@@ -3,8 +3,12 @@ package com.marmore.api.imageedit.web;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.marmore.api.imageedit.domain.CatalogoPedras;
+import com.marmore.api.imageedit.domain.Pedra;
 import com.marmore.api.imageedit.storage.GeneratedImage;
 import com.marmore.api.imageedit.storage.GeneratedImageRepository;
 import com.marmore.api.imageedit.storage.ImageObjectStorage;
@@ -22,31 +26,35 @@ import reactor.core.publisher.Mono;
 
 /**
  * Testes do {@link ImageHistoryHandler} no GET /images. Contrato do JSON de saida: array com
- * resumos snake_case em PT (criado_em, custo_brl, latencia_ms, pedra, produto, nome_produto),
- * criado_em como ISO-8601, custo nulo preservado, produto/nome_produto nulos quando a imagem nao
- * tem produto gravado e ordem exatamente como devolvida pelo repositorio. A serializacao Jackson e
- * real: WebTestClient ligado direto ao {@link ImageHistoryRouter}, sem contexto Spring. O
- * repositorio e mock ({@link ImageObjectStorage} so satisfaz o construtor do handler).
+ * resumos snake_case em PT (criado_em, custo_brl, latencia_ms, pedra, nome_pedra, produto,
+ * nome_produto), criado_em como ISO-8601, custo nulo preservado, produto/nome_produto nulos quando
+ * a imagem nao tem produto gravado, nome_pedra resolvido do {@link CatalogoPedras} (nulo quando a
+ * imagem nao tem pedra gravada ou o id nao existe no catalogo) e ordem exatamente como devolvida
+ * pelo repositorio. A serializacao Jackson e real: WebTestClient ligado direto ao {@link
+ * ImageHistoryRouter}, sem contexto Spring. O repositorio e o catalogo sao mocks ({@link
+ * ImageObjectStorage} so satisfaz o construtor do handler).
  */
 class ImageHistoryHandlerTest {
 
   private GeneratedImageRepository repository;
   private ImageObjectStorage storage;
+  private CatalogoPedras catalogo;
   private WebTestClient client;
 
   @BeforeEach
   void setUp() {
     repository = mock(GeneratedImageRepository.class);
     storage = mock(ImageObjectStorage.class);
-    ImageHistoryHandler handler = new ImageHistoryHandler(repository, storage);
+    catalogo = mock(CatalogoPedras.class);
+    ImageHistoryHandler handler = new ImageHistoryHandler(repository, storage, catalogo);
     client =
         WebTestClient.bindToRouterFunction(new ImageHistoryRouter().imageHistoryRoute(handler))
             .build();
   }
 
   @DisplayName(
-      "GET /images: 2 resumos em snake_case, ordem do repositório, custo nulo preservado, pedra e"
-          + " produto/nome_produto")
+      "GET /images: 2 resumos em snake_case, ordem do repositório, custo nulo preservado, pedra,"
+          + " nome_pedra e produto/nome_produto")
   @Test
   void listaResumosEmSnakeCaseNaOrdemDoRepositorio() {
     GeneratedImage nova =
@@ -68,6 +76,12 @@ class ImageHistoryHandlerTest {
             "pedra-marmore",
             null);
     when(repository.findAllByOrderByCriadoEmDesc()).thenReturn(List.of(nova, antiga));
+    when(catalogo.porId("pedra-basalto"))
+        .thenReturn(
+            Optional.of(new Pedra("pedra-basalto", "Basalto Negro", "Granitos", "basalto.jpg")));
+    when(catalogo.porId("pedra-marmore"))
+        .thenReturn(
+            Optional.of(new Pedra("pedra-marmore", "Marmore Branco", "Marmores", "marmore.jpg")));
 
     client
         .get()
@@ -92,6 +106,8 @@ class ImageHistoryHandlerTest {
         .isEqualTo(1234)
         .jsonPath("[0].pedra")
         .isEqualTo("pedra-basalto")
+        .jsonPath("[0].nome_pedra")
+        .isEqualTo("Basalto Negro")
         .jsonPath("[0].produto")
         .isEqualTo("pia-americana")
         .jsonPath("[0].nome_produto")
@@ -108,10 +124,52 @@ class ImageHistoryHandlerTest {
         .isEqualTo(800)
         .jsonPath("[1].pedra")
         .isEqualTo("pedra-marmore")
+        .jsonPath("[1].nome_pedra")
+        .isEqualTo("Marmore Branco")
         .jsonPath("[1].produto")
         .value(produto -> assertThat(produto).isNull())
         .jsonPath("[1].nome_produto")
         .value(nomeProduto -> assertThat(nomeProduto).isNull());
+  }
+
+  @DisplayName(
+      "GET /images: nome_pedra nulo quando a pedra não está gravada ou não está no catálogo")
+  @Test
+  void retornaNomePedraNuloQuandoPedraNaoGravadaOuAusenteNoCatalogo() {
+    GeneratedImage semPedra =
+        imagem(
+            UUID.randomUUID(),
+            Instant.parse("2026-08-27T12:00:00Z"),
+            "gpt-image-1",
+            null,
+            100L,
+            null,
+            null);
+    GeneratedImage pedraSumida =
+        imagem(
+            UUID.randomUUID(),
+            Instant.parse("2026-08-26T09:30:00Z"),
+            "gpt-image-1",
+            null,
+            100L,
+            "pedra-sumida",
+            null);
+    when(repository.findAllByOrderByCriadoEmDesc()).thenReturn(List.of(semPedra, pedraSumida));
+    when(catalogo.porId("pedra-sumida")).thenReturn(Optional.empty());
+
+    client
+        .get()
+        .uri("/images")
+        .exchange()
+        .expectStatus()
+        .isOk()
+        .expectBody()
+        .jsonPath("[0].nome_pedra")
+        .value(nomePedra -> assertThat(nomePedra).isNull())
+        .jsonPath("[1].nome_pedra")
+        .value(nomePedra -> assertThat(nomePedra).isNull());
+
+    verify(catalogo, never()).porId(null);
   }
 
   @DisplayName("GET /images/{id}/arquivo: 200 com image/png e os bytes baixados do storage")

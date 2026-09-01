@@ -1,5 +1,7 @@
 package com.marmore.api.imageedit.web;
 
+import com.marmore.api.imageedit.domain.CatalogoPedras;
+import com.marmore.api.imageedit.domain.Pedra;
 import com.marmore.api.imageedit.domain.Produto;
 import com.marmore.api.imageedit.storage.GeneratedImageRepository;
 import com.marmore.api.imageedit.storage.ImageObjectStorage;
@@ -25,16 +27,20 @@ public class ImageHistoryHandler {
 
   private final GeneratedImageRepository repository;
   private final ImageObjectStorage storage;
+  private final CatalogoPedras catalogo;
 
   /**
    * Construtor.
    *
    * @param repository repositorio JPA dos metadados das imagens geradas
    * @param storage object storage das imagens (usado em ciclo posterior)
+   * @param catalogo catalogo de pedras para resolver o nome comercial
    */
-  public ImageHistoryHandler(GeneratedImageRepository repository, ImageObjectStorage storage) {
+  public ImageHistoryHandler(
+      GeneratedImageRepository repository, ImageObjectStorage storage, CatalogoPedras catalogo) {
     this.repository = repository;
     this.storage = storage;
+    this.catalogo = catalogo;
   }
 
   /**
@@ -58,12 +64,27 @@ public class ImageHistoryHandler {
                                 imagem.getCustoBrl(),
                                 imagem.getLatenciaMs(),
                                 imagem.getPedra(),
+                                nomePedra(imagem.getPedra()),
                                 imagem.getProduto(),
                                 nomeProduto(imagem.getProduto())))
                     .toList())
         .flatMap(
             resumos ->
                 ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(resumos));
+  }
+
+  /**
+   * Resolve o nome comercial da pedra do catalogo a partir do id gravado nos metadados. Id nulo nao
+   * consulta o catalogo.
+   *
+   * @param id id da pedra gravado na imagem (pode ser nulo ou desconhecido)
+   * @return nome comercial do catalogo, ou nulo quando o id e nulo ou nao encontrado
+   */
+  private String nomePedra(String id) {
+    if (id == null) {
+      return null;
+    }
+    return catalogo.porId(id).map(Pedra::nome).orElse(null);
   }
 
   /**
