@@ -1,0 +1,226 @@
+{
+  "pedras": [
+    {
+      "id": "amarelo_florenca",
+      "nome": "Amarelo Florenca",
+      "categoria": "Granitos",
+      "arquivo": "amarelo_florenca.jpeg"
+    },
+    {
+      "id": "amarelo_icarai",
+      "nome": "Amarelo Icarai",
+      "categoria": "Granitos",
+      "arquivo": "amarelo_icarai.jpeg"
+    },
+    {
+      "id": "amarelo_maracuja",
+      "nome": "Amarelo Maracuja",
+      "categoria": "Granitos",
+      "arquivo": "amarelo_maracuja.png"
+    },
+    {
+      "id": "amarelo_ornamental",
+      "nome": "Amarelo Ornamental",
+      "categoria": "Granitos",
+      "arquivo": "amarelo_ornamental.png"
+    },
+    {
+      "id": "branco_ceara",
+      "nome": "Branco Ceara",
+      "categoria": "Granitos",
+      "arquivo": "branco_ceara.png"
+    },
+    {
+      "id": "branco_dallas",
+      "nome": "Branco Dallas",
+      "categoria": "Granitos",
+      "arquivo": "branco_dallas.jpeg"
+    },
+    {
+      "id": "branco_itaunas",
+      "nome": "Branco Itaunas",
+      "categoria": "Granitos",
+      "arquivo": "branco_itaunas.png"
+    },
+    {
+      "id": "branco_nepal",
+      "nome": "Branco Nepal",
+      "categoria": "Granitos",
+      "arquivo": "branco_nepal.png"
+    },
+    {
+      "id": "branco_pitaya",
+      "nome": "Branco Pitaya",
+      "categoria": "Granitos",
+      "arquivo": "branco_pitaya.png"
+    },
+    {
+      "id": "branco_siena",
+      "nome": "Branco Siena",
+      "categoria": "Granitos",
+      "arquivo": "branco_siena.png"
+    },
+    {
+      "id": "cafe_imperial",
+      "nome": "Cafe Imperial",
+      "categoria": "Granitos",
+      "arquivo": "cafe_imperial.png"
+    },
+    {
+      "id": "cinza_castelo",
+      "nome": "Cinza Castelo",
+      "categoria": "Granitos",
+      "arquivo": "cinza_castelo.png"
+    },
+    {
+      "id": "cinza_corumba",
+      "nome": "Cinza Corumba",
+      "categoria": "Granitos",
+      "arquivo": "cinza_corumba.png"
+    },
+    {
+      "id": "cinza_corumbazinho",
+      "nome": "Cinza Corumbazinho",
+      "categoria": "Granitos",
+      "arquivo": "cinza_corumbazinho.jpeg"
+    },
+    {
+      "id": "cinza_ocre",
+      "nome": "Cinza Ocre",
+      "categoria": "Granitos",
+      "arquivo": "cinza_ocre.png"
+    },
+    {
+      "id": "marrom_absoluto",
+      "nome": "Marrom Absoluto",
+      "categoria": "Granitos",
+      "arquivo": "marrom_absoluto.png"
+    },
+    {
+      "id": "marrom_tabaco",
+      "nome": "Marrom Tabaco",
+      "categoria": "Granitos",
+      "arquivo": "marrom_tabaco.png"
+    },
+    {
+      "id": "negresco",
+      "nome": "Negresco",
+      "categoria": "Granitos",
+      "arquivo": "negresco.jpeg"
+    },
+    {
+      "id": "preto_brasil",
+      "nome": "Preto Brasil",
+      "categoria": "Granitos",
+      "arquivo": "preto_brasil.png"
+    },
+    {
+      "id": "preto_indiano",
+      "nome": "Preto Indiano",
+      "categoria": "Granitos",
+      "arquivo": "preto_indiano.png"
+    },
+    {
+      "id": "preto_sao_gabriel",
+      "nome": "Preto Sao Gabriel",
+      "categoria": "Granitos",
+      "arquivo": "preto_sao_gabriel.png"
+    },
+    {
+      "id": "semi_absoluto",
+      "nome": "Semi Absoluto",
+      "categoria": "Granitos",
+      "arquivo": "semi_absoluto.png"
+    },
+    {
+      "id": "verde_perola",
+      "nome": "Verde Perola",
+      "categoria": "Granitos",
+      "arquivo": "verde_perola.png"
+    },
+    {
+      "id": "verde_ubatuba",
+      "nome": "Verde Ubatuba",
+      "categoria": "Granitos",
+      "arquivo": "verde_ubatuba.png"
+    },
+    {
+      "id": "vermelho_brasilia",
+      "nome": "Vermelho Brasilia",
+      "categoria": "Granitos",
+      "arquivo": "vermelho_brasilia.png"
+    },
+    {
+      "id": "via_lactea",
+      "nome": "Via Lactea",
+      "categoria": "Granitos",
+      "arquivo": "via_lactea.png"
+    },
+    {
+      "id": "quartzo_branco_stelar",
+      "nome": "Quartzo Branco Stelar",
+      "categoria": "Importados e Sinteticos",
+      "arquivo": "quartzo_branco_stelar.png"
+    },
+    {
+      "id": "quartzo_branco_zeus",
+      "nome": "Quartzo Branco Zeus",
+      "categoria": "Importados e Sinteticos",
+      "arquivo": "quartzo_branco_zeus.png"
+    },
+    {
+      "id": "quartzo_prime",
+      "nome": "Quartzo Prime",
+      "categoria": "Importados e Sinteticos",
+      "arquivo": "quartzo_prime.png"
+    },
+    {
+      "id": "quartzo_sky_white",
+      "nome": "Quartzo Sky White",
+      "categoria": "Importados e Sinteticos",
+      "arquivo": "quartzo_sky_white.png"
+    },
+    {
+      "id": "bianco_superiore",
+      "nome": "Bianco Superiore",
+      "categoria": "Marmores",
+      "arquivo": "bianco_superiore.png"
+    },
+    {
+      "id": "dolomitico_parana",
+      "nome": "Dolomitico Parana",
+      "categoria": "Marmores",
+      "arquivo": "dolomitico_parana.png"
+    },
+    {
+      "id": "marmore_bege_bahia",
+      "nome": "Marmore Bege Bahia",
+      "categoria": "Marmores",
+      "arquivo": "marmore_bege_bahia.jpeg"
+    },
+    {
+      "id": "marmore_branco",
+      "nome": "Marmore Branco",
+      "categoria": "Marmores",
+      "arquivo": "marmore_branco.png"
+    },
+    {
+      "id": "perla_venata",
+      "nome": "Perla Venata",
+      "categoria": "Marmores",
+      "arquivo": "perla_venata.png"
+    },
+    {
+      "id": "cristallo",
+      "nome": "Cristallo",
+      "categoria": "Quartzitos Naturais",
+      "arquivo": "cristallo.jpeg"
+    },
+    {
+      "id": "radial_gold",
+      "nome": "Radial Gold",
+      "categoria": "Quartzitos Naturais",
+      "arquivo": "radial_gold.jpeg"
+    }
+  ]
+}
