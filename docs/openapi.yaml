@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: marmore-api
-  version: 0.0.1
+  version: 0.1.0
   description: |
     API de edicao de imagem do projeto marmore. Gera uma versao da foto do
     ambiente com a pedra escolhida aplicada ao Balcao, via modelo de edicao
